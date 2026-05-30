@@ -1,0 +1,16 @@
+=== FRONTEND ===
+- React (with TypeScript): Modern UI library for building modular, component-based user interfaces with type safety.
+- Vite: High-performance frontend build tool and dev server.
+- Tailwind CSS: Utility-first CSS framework configured with custom theme colors, spacing, and font systems.
+- Framer Motion: React animation library for smooth micro-interactions, spring animations, transitions, and keyframes.
+- Lucide React: Icon toolkit for high-quality SVG icons styled with tailwind classes.
+- React Hooks (useState, useEffect, useMemo, useCallback): Functional state management and side effects.
+- Service Workers / PWA: Background worker script enabling offline caching, web app manifest capabilities, and install alerts.
+- HTML5 LocalStorage: Browser-based key-value storage used to persist table configurations, order history, and menu overrides.
+- CSS Grid Column Spanning: Grid-based bento-layout mapping where certain rows (outdoor umbrellas) use conditional classes (`col-span-2`) for responsive width sizing.
+- Inline SVGs: Scalable custom SVGs (such as the outdoor umbrella picnic table) loaded dynamically based on components schema.
+- Data Aggregation with useMemo: Real-time calculation of today's revenue, month-to-date sales, top standout items, and historical trends directly from local state order records.
+- Neo-Brutalist Styling on Dynamic Data: Custom horizontal bar chart created using styled responsive divs with variable percentage width bindings (`style={{ width: '${pct}%' }}`) to keep aesthetics consistent with the application theme. Consistent styling principles are applied across views, including shadow-free active button states for category filters.
+- Lazy-Loaded Images: Optimizing initial page load and performance by natively lazy-loading menu card food photography (`loading="lazy"`).
+- Dynamic Image Asset Mapping & Neo-Brutalist Fallbacks: Categories mapped to generated high-quality food photography files (`public/images/`) with customized fallback placeholders showing category abbreviations when no image URL is provided.
+

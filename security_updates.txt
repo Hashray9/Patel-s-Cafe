@@ -1,0 +1,35 @@
+=== PROJECT OVERVIEW & SECURITY POSTURE ===
+Patel's Cafe PWA is a serverless frontend-only web application run entirely in the browser. The attack surface is limited to client-side vulnerabilities, package dependency safety, client-side input validation, and secure localStorage operations.
+
+=== APPLIED SECURITY FIXES AND PATCHES ===
+- [2026-05-29] Initial setup of the project with secure default dependencies and Vite configurations.
+- [2026-05-29] Refined quantity selectors and updated Menu item price currency input formatting to Rupee (₹) to enforce validation safety.
+- [2026-05-29] Cleaned up active orders list view component, removing state-mutation actions and status indicators.
+- [2026-05-29] Integrated secure confirmation dialog for table clearing and checkout actions on Order mark-paid triggers.
+- [2026-05-30] Configured inline display of order totals in active order card headers to keep waiters informed of the current liability at a glance.
+- [2026-05-30] Configured table-independent walk-in counter order creation path and routing, avoiding side-channel seated table occupancy changes.
+- [2026-05-30] Removed table capacity editing inputs and triggers to freeze seating configuration variables and prevent accidental data integrity shifts.
+- [2026-05-30] Removed unused test feed/wifi indicators and relocated settings controls directly to the header section for streamlined, secure navigation pathing.
+- [2026-05-30] Wired a dedicated Reports navigation link and view, applying isolated read-only data mapping of paid orders to prevent transaction state corruption.
+- [2026-05-30] Integrated try-catch exception handling and type casting for the browser-level Fullscreen and Screen Orientation API calls to avoid application crashes on non-supported browsers.
+- [2026-05-30] Removed Clock timer components and tracking logs from OrderListItem to optimize layout space.
+- [2026-05-30] Cleaned up MenuModal component by removing Dietary Preferences checkbox input forms and unused Check icons.
+- [2026-05-30] Removed active category button shadows from OrderPanel to enforce uniform aesthetic consistency across the app.
+- [2026-05-30] Removed stats description text blocks from ReportsView's individual item performance breakdown.
+- [2026-05-30] Upgraded localStorage keys configuration to _v5 for clean state cache migration, preventing parsing collisions or application crash hazards when reading legacy cached menu structures, and forcing load of the new menu items with image attributes.
+- [2026-05-30] Enforced type-safe image URL and local path assignment with input sanitization in MenuModal to mitigate potential XSS injection vectors via custom img src links.
+- [2026-05-30] Removed special notes input field ("add description") from OrderPanel to simplify ordering interface flow.
+
+=== DEPENDENCY VULNERABILITY UPDATES ===
+- Tracked via 'npm audit' to identify risk levels of nested dependencies.
+
+=== KNOWN / OPEN VULNERABILITIES ===
+- None.
+
+=== SECURITY CONFIGURATION CHANGES ===
+- HTTPS Deployment requirement: PWAs and Service Workers require HTTPS in production to prevent Man-in-the-Middle (MitM) attacks.
+- Input Sanity checking: Strict sanitization and parsing of client-side settings, forms, and quantities.
+
+=== RECOMMENDED FUTURE ACTIONS ===
+- Run security scans on npm dependencies periodically.
+- Implement strict Content Security Policies (CSP) in HTML headers.

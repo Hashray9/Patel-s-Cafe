@@ -1,0 +1,42 @@
+=== SYSTEM ARCHITECTURE OVERVIEW ===
+Patel's Cafe PWA is a serverless, single-page progressive web application built entirely on the client side using:
+- React (TSX) for views and layout
+- Tailwind CSS for responsive Neo-Brutalist styling
+- LocalStorage for client-side state persistence
+
+=== DETAILED DATA FLOWS ===
+1. Table State & Seating Management Flow:
+   - User views Floor Plan -> selects a table.
+   - User updates table occupancy status (Seats walk-in guest or checks out bill).
+   - State handler updates table object status in the database -> triggers local storage sync -> re-renders floor plan layout.
+   - Layout Rendering Flow: Seating is rendered in a bento layout. Standard table list contains T-1 through T-6, keeping layout aligned.
+
+2. Order Lifecycle & Billing Flow:
+   - Barista/Waiter selects active table -> opens order panel displaying menu items in a clean grid layout.
+   - Categories can be filtered without active button shadows for a cleaner look.
+   - Each menu card displays an always-visible incremental/decremental quantity selector (quantity starts at 0, decrementing below 1 removes it from active list, minus is disabled at 0).
+   - Prices, taxes, and total billing are displayed and calculated strictly in Indian Rupees (₹).
+   - Submit Order -> updates table state to 'Occupied' (if not already) -> stores active order in order queue. Walk-in takeaway/counter orders are registered with a mock table state that bypasses seated table occupancy.
+   - Active orders queue lists unpaid orders in collapsible cards segmented by a toggle switcher: "Table Orders" and "Walk-in Orders".
+   - Each card contains an "Update Order" button that opens the ordering drawer (which updates the existing active order with additions/removals) and a "Mark Paid" button that completes the table checkout, clearing order details and resetting table status to 'Available' (no-op for walk-ins).
+
+3. Menu Item Administration Flow:
+   - User views Menu screen -> searches or filters by category (Sandwich, Slice, Pizza, Maggi, Milkshake, Puff, Bhel, French Fries, Burger, Tea/Coffee, Thepla/Paratha, Extra).
+   - User toggles item availability (instantly updates ordering availability) or clicks "Edit" to modify details, including a new "Image URL or Path" field in the MenuModal.
+   - Creating/modifying a menu item saves its image path (mapping to dynamic static files in `/images/` or external links) into the state.
+   - MenuCard reads the image field, rendering the food photo inside a neobrutalist border at the top of the card with an interactive zoom hover effect.
+   - If an item is marked as out-of-stock, a dark semi-transparent overlay and "Out of Stock" badge are applied directly over the food photo.
+   - Global menu state (including image paths) is modified and saved to LocalStorage.
+
+4. Performance Analytics & Reports Flow:
+   - User selects Reports tab -> reads paid order list from CafeContext state.
+   - Filters and aggregates orders to compute: today's revenue (current day timestamps), month-to-date sales, average order value (AOV, dividing total sales by order counts), and transaction volume.
+   - Computes vertical bar coordinates relative to dynamic Y-axis metrics (computed tick levels representing units sold) and logs them against X-axis item/category labels in a scrollable bar chart wrapper.
+   - Render bars in cycling vibrant Neo-Brutalist colors (Yellow, Green, Pink, Purple, Blue, Orange, Teal, Coral) with height bounds mapping exactly to parent height parameters.
+   - Provides a fullscreen toggle trigger on the chart card that enters browser-level fullscreen and requests screen orientation lock to force landscape display on device screens.
+   - Highlights the top three standby performers and supports item-specific queries to track total volumes and total earnings (clean stats display without descriptions).
+
+=== ERROR HANDLING STRATEGIES ===
+- LocalStorage Fallback: In-memory store fallback if browser disables localStorage (e.g. private tabs).
+- Schema Verification: Validates stored data format on app startup, falling back to default seed data if corrupted.
+- Form Validation: Ensures item prices are non-negative, tables have positive seating numbers, and orders are non-empty.
