@@ -12,7 +12,7 @@ Patel's Cafe PWA is a serverless, single-page progressive web application built 
    - Layout Rendering Flow: Seating is rendered in a bento layout. Standard table list contains T-1 through T-6, keeping layout aligned.
 
 2. Order Lifecycle & Billing Flow:
-   - Barista/Waiter selects active table -> opens order panel displaying menu items in a clean grid layout.
+   - Barista/Waiter selects active table -> opens order panel displaying menu items in a grid layout with a top-level search bar.
    - Categories can be filtered without active button shadows for a cleaner look.
    - Each menu card displays an always-visible incremental/decremental quantity selector (quantity starts at 0, decrementing below 1 removes it from active list, minus is disabled at 0).
    - Prices, taxes, and total billing are calculated strictly in Indian Rupees (₹). To keep the order-taking panel clean, the panel bottom hides running totals and shows a "Table X order" or "Walk-in order" button. Clicking this button opens an overlay summary card showing the item names, quantities, unit prices, unit totals, and overall billing figures.

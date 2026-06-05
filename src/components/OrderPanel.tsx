@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Plus, Minus, ShoppingBag, Trash2 } from 'lucide-react';
+import { X, Plus, Minus, ShoppingBag, Trash2, Search } from 'lucide-react';
 import { useCafe } from '../context/CafeContext';
 import type { OrderItem, MenuItem } from '../types';
 
@@ -28,14 +28,16 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ tableId, isOpen, onClose
 
   const [activeCategory, setActiveCategory] = useState<'all' | MenuItem['category']>('all');
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   if (!isOpen || !table) return null;
 
   const categories: ('all' | MenuItem['category'])[] = ['all', 'sandwich', 'slice', 'pizza', 'maggi', 'milkshake', 'puff', 'bhel', 'fries', 'burger', 'tea-coffee', 'thepla-paratha', 'extra'];
 
-  const filteredMenu = activeCategory === 'all' 
-    ? menu.filter(item => item.isAvailable)
-    : menu.filter(item => item.category === activeCategory && item.isAvailable);
+  const filteredMenu = menu
+    .filter(item => item.isAvailable)
+    .filter(item => activeCategory === 'all' ? true : item.category === activeCategory)
+    .filter(item => item.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
   const handleAddToCart = (itemId: string) => {
     setCart(prev => {
@@ -153,6 +155,20 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ tableId, isOpen, onClose
                 </span>
               </button>
             ))}
+          </div>
+
+          {/* Search Bar */}
+          <div className="p-3 bg-surface border-b-2 border-black">
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search item name..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full neo-brutal-input pl-10 pr-4 py-2 text-[14px] rounded-lg shadow-[2px_2px_0px_0px_rgba(30,27,21,1)] bg-white text-black"
+              />
+              <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-on-surface-variant/60 stroke-[2.5]" />
+            </div>
           </div>
 
           {/* Menu Items Grid */}
