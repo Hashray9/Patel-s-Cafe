@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, ChevronUp, PlusCircle, CreditCard } from 'lucide-react';
+import { ChevronDown, ChevronUp, PlusCircle, CreditCard, Trash2, Plus, Minus } from 'lucide-react';
 import type { Order } from '../types';
 import { useCafe } from '../context/CafeContext';
 
@@ -10,7 +10,7 @@ interface OrderListItemProps {
 }
 
 export const OrderListItem: React.FC<OrderListItemProps> = ({ order, onOpenOrder }) => {
-  const { menu, settings, updateOrderStatus } = useCafe();
+  const { menu, settings, updateOrderStatus, createOrder } = useCafe();
   const [isOpen, setIsOpen] = useState(false);
 
   const [showConfirmPaid, setShowConfirmPaid] = useState(false);
@@ -23,6 +23,24 @@ export const OrderListItem: React.FC<OrderListItemProps> = ({ order, onOpenOrder
   const handleUpdate = (e: React.MouseEvent) => {
     e.stopPropagation(); // prevent toggling collapse when clicking update button
     onOpenOrder(order.tableId);
+  };
+
+  const handleRemoveItem = (menuItemId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updatedItems = order.items.filter(item => item.menuItemId !== menuItemId);
+    createOrder(order.tableId, updatedItems);
+  };
+
+  const handleUpdateQty = (menuItemId: string, change: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updatedItems = order.items.map(item => {
+      if (item.menuItemId === menuItemId) {
+        const newQty = item.quantity + change;
+        return newQty > 0 ? { ...item, quantity: newQty } : null;
+      }
+      return item;
+    }).filter(Boolean) as typeof order.items;
+    createOrder(order.tableId, updatedItems);
   };
 
   return (
@@ -62,7 +80,7 @@ export const OrderListItem: React.FC<OrderListItemProps> = ({ order, onOpenOrder
           className="flex-1 neo-brutal-btn bg-white text-black py-2 rounded-lg font-label-bold text-[13px] flex items-center justify-center gap-1.5 shadow-[2px_2px_0px_0px_#000000]"
         >
           <PlusCircle size={15} className="stroke-[2.5]" />
-          Update Order
+          Add Item
         </button>
 
         <button
@@ -93,10 +111,10 @@ export const OrderListItem: React.FC<OrderListItemProps> = ({ order, onOpenOrder
                   {order.items.map((item, idx) => {
                     const menuItem = menu.find(m => m.id === item.menuItemId);
                     return (
-                      <div key={idx} className="py-2 flex justify-between items-start text-[14px]">
-                        <div className="flex-1 min-w-0 pr-2">
+                      <div key={idx} className="py-2 flex justify-between items-center text-[14px] gap-4">
+                        <div className="flex-1 min-w-0">
                           <div className="font-bold text-on-surface">
-                            {item.quantity}x {menuItem?.name || 'Unknown Item'}
+                            {menuItem?.name || 'Unknown Item'}
                           </div>
                           {item.notes && (
                             <p className="text-[11px] text-on-tertiary-container font-semibold mt-0.5 bg-tertiary-container px-2 py-0.5 rounded border border-on-surface/15 inline-block">
@@ -104,9 +122,43 @@ export const OrderListItem: React.FC<OrderListItemProps> = ({ order, onOpenOrder
                             </p>
                           )}
                         </div>
-                        <span className="font-bold text-on-surface">
-                          {settings.currency}{((menuItem?.price || 0) * item.quantity).toFixed(2)}
-                        </span>
+                        
+                        <div className="flex items-center gap-2.5 select-none shrink-0">
+                          {/* Increment / Decrement Controls */}
+                          <div className="flex items-center bg-surface-container-high rounded-lg border-2 border-black p-0.5">
+                            <button
+                              onClick={(e) => handleUpdateQty(item.menuItemId, -1, e)}
+                              className="p-1 rounded bg-white border border-black hover:bg-surface-container-highest active:translate-y-[0.5px] text-black transition-all cursor-pointer flex items-center justify-center"
+                              title="Decrease quantity"
+                            >
+                              <Minus size={9} className="stroke-[3]" />
+                            </button>
+                            <span className="font-label-bold text-[12px] px-2 font-bold text-black min-w-[18px] text-center">
+                              {item.quantity}
+                            </span>
+                            <button
+                              onClick={(e) => handleUpdateQty(item.menuItemId, 1, e)}
+                              className="p-1 rounded bg-white border border-black hover:bg-surface-container-highest active:translate-y-[0.5px] text-black transition-all cursor-pointer flex items-center justify-center"
+                              title="Increase quantity"
+                            >
+                              <Plus size={9} className="stroke-[3]" />
+                            </button>
+                          </div>
+
+                          {/* Delete Item Button */}
+                          <button
+                            onClick={(e) => handleRemoveItem(item.menuItemId, e)}
+                            className="p-1 rounded text-red-600 hover:text-red-800 hover:bg-[#ffebeb] border border-transparent hover:border-black transition-colors cursor-pointer flex items-center justify-center"
+                            title="Remove Item"
+                          >
+                            <Trash2 size={13} className="stroke-[2.5]" />
+                          </button>
+
+                          {/* Item Price Total */}
+                          <span className="font-bold text-on-surface min-w-[65px] text-right">
+                            {settings.currency}{((menuItem?.price || 0) * item.quantity).toFixed(2)}
+                          </span>
+                        </div>
                       </div>
                     );
                   })}

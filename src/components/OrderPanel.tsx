@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Plus, Minus, ShoppingBag } from 'lucide-react';
+import { X, Plus, Minus, ShoppingBag, Trash2 } from 'lucide-react';
 import { useCafe } from '../context/CafeContext';
 import type { OrderItem, MenuItem } from '../types';
 
@@ -27,6 +27,7 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ tableId, isOpen, onClose
   });
 
   const [activeCategory, setActiveCategory] = useState<'all' | MenuItem['category']>('all');
+  const [isSummaryOpen, setIsSummaryOpen] = useState(false);
 
   if (!isOpen || !table) return null;
 
@@ -57,6 +58,16 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ tableId, isOpen, onClose
       }).filter(Boolean) as OrderItem[];
     });
   };
+
+  const handleRemoveFromCart = (itemId: string) => {
+    setCart(prev => prev.filter(i => i.menuItemId !== itemId));
+  };
+
+  useEffect(() => {
+    if (cart.length === 0) {
+      setIsSummaryOpen(false);
+    }
+  }, [cart]);
 
   const getItemQty = (itemId: string) => {
     return cart.find(c => c.menuItemId === itemId)?.quantity || 0;
@@ -247,34 +258,138 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ tableId, isOpen, onClose
 
           {/* Bottom Billing Footer Summary */}
           {cart.length > 0 && (
-            <div className="p-4 bg-surface border-t-[3px] border-black space-y-2.5 select-none">
-              <div className="text-[12px] font-bold space-y-1 text-on-surface-variant">
+            <div className="p-4 bg-surface border-t-[3px] border-black select-none">
+              <button
+                onClick={() => setIsSummaryOpen(true)}
+                className="w-full neo-brutal-btn bg-[#ffd982] text-black py-3.5 rounded-[10px] border-[3px] border-black shadow-[4px_4px_0px_0px_#000000] font-headline-md text-[16px] flex items-center justify-center gap-1.5"
+              >
+                <ShoppingBag size={18} className="stroke-[2.5]" />
+                {isWalkIn ? 'Walk-in order' : `Table ${table.number} order`}
+              </button>
+            </div>
+          )}
+        </motion.div>
+      </div>
+
+      {/* Order Summary Popup Card */}
+      <AnimatePresence>
+        {isSummaryOpen && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsSummaryOpen(false)}
+              className="absolute inset-0 bg-on-surface/40 backdrop-blur-xs cursor-pointer"
+            />
+
+            {/* Popup Card */}
+            <motion.div
+              initial={{ scale: 0.9, y: 15, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.9, y: 15, opacity: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+              className="relative bg-surface w-full max-w-sm p-6 rounded-xl border-3 border-black shadow-[8px_8px_0px_0px_#000000] z-10 select-none text-black"
+            >
+              <h3 className="font-headline-md text-[20px] font-bold border-b-2 border-black pb-2 mb-3">
+                {isWalkIn ? 'Walk-in Order Summary' : `Table ${table.number} Order Summary`}
+              </h3>
+
+              {/* Items List */}
+              <div className="max-h-60 overflow-y-auto pr-3 mb-4 divide-y-2 divide-black/10 border-b-2 border-black/10">
+                {cart.map((cartItem) => {
+                  const menuItem = menu.find(m => m.id === cartItem.menuItemId);
+                  if (!menuItem) return null;
+                  const itemTotal = menuItem.price * cartItem.quantity;
+                  return (
+                    <div key={cartItem.menuItemId} className="py-2.5 flex justify-between items-center text-[14px] gap-4">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-black leading-tight">{menuItem.name}</p>
+                        <p className="text-[12px] text-on-surface-variant font-medium mt-0.5">
+                          {settings.currency}{menuItem.price.toFixed(2)} / unit
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2.5 select-none shrink-0">
+                        {/* Quantity controls */}
+                        <div className="flex items-center bg-surface-container-high rounded-lg border-2 border-black p-0.5">
+                          <button
+                            onClick={() => handleUpdateQuantity(cartItem.menuItemId, -1)}
+                            className="p-1 rounded bg-white border border-black hover:bg-surface-container-highest active:translate-y-[0.5px] text-black transition-all cursor-pointer flex items-center justify-center"
+                            title="Decrease quantity"
+                          >
+                            <Minus size={9} className="stroke-[3]" />
+                          </button>
+                          <span className="font-label-bold text-[12px] px-2 font-bold text-black min-w-[18px] text-center">
+                            {cartItem.quantity}
+                          </span>
+                          <button
+                            onClick={() => handleAddToCart(cartItem.menuItemId)}
+                            className="p-1 rounded bg-white border border-black hover:bg-surface-container-highest active:translate-y-[0.5px] text-black transition-all cursor-pointer flex items-center justify-center"
+                            title="Increase quantity"
+                          >
+                            <Plus size={9} className="stroke-[3]" />
+                          </button>
+                        </div>
+
+                        {/* Delete button */}
+                        <button
+                          onClick={() => handleRemoveFromCart(cartItem.menuItemId)}
+                          className="p-1 rounded text-red-600 hover:text-red-800 hover:bg-[#ffebeb] border border-transparent hover:border-black transition-colors cursor-pointer flex items-center justify-center"
+                          title="Remove item"
+                        >
+                          <Trash2 size={13} className="stroke-[2.5]" />
+                        </button>
+
+                        {/* Total price for this item */}
+                        <span className="font-bold text-black min-w-[65px] text-right">
+                          {settings.currency}{itemTotal.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Bill Details */}
+              <div className="space-y-1.5 text-[13px] font-bold text-on-surface-variant mb-4 border-b-2 border-dashed border-black/20 pb-3">
                 <div className="flex justify-between">
-                  <span>Subtotal ({cart.reduce((a, b) => a + b.quantity, 0)} items)</span>
+                  <span>Subtotal</span>
                   <span>{settings.currency}{subtotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Tax GST ({(settings.taxRate * 100).toFixed(0)}%)</span>
                   <span>{settings.currency}{tax.toFixed(2)}</span>
                 </div>
-              </div>
-              
-              <div className="flex justify-between text-[17px] font-headline-md font-bold text-black pt-2 border-t-2 border-dashed border-black/20">
-                <span>Total Amount Due</span>
-                <span>{settings.currency}{total.toFixed(2)}</span>
+                <div className="flex justify-between text-[16px] text-black font-extrabold pt-1.5">
+                  <span>Total Amount</span>
+                  <span>{settings.currency}{total.toFixed(2)}</span>
+                </div>
               </div>
 
-              <button
-                onClick={handleSubmit}
-                className="w-full mt-2.5 neo-brutal-btn bg-primary-container text-on-primary-container py-3.5 rounded-[10px] border-[3px] border-black shadow-[4px_4px_0px_0px_#000000] font-headline-md text-[16px] flex items-center justify-center gap-1.5"
-              >
-                <ShoppingBag size={18} className="stroke-[2.5]" />
-                Confirm & Send Order
-              </button>
-            </div>
-          )}
-        </motion.div>
-      </div>
+              {/* Buttons */}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setIsSummaryOpen(false)}
+                  className="flex-1 neo-brutal-btn bg-white text-black py-2.5 rounded-lg font-label-bold text-[13px] shadow-[2.5px_2.5px_0px_0px_#000000] border-2 border-black hover:bg-surface-container-high transition-all cursor-pointer text-center"
+                >
+                  Add Items
+                </button>
+                <button
+                  onClick={() => {
+                    setIsSummaryOpen(false);
+                    handleSubmit();
+                  }}
+                  className="flex-1 neo-brutal-btn bg-[#b2f0cf] text-black py-2.5 rounded-lg font-label-bold text-[13px] shadow-[2.5px_2.5px_0px_0px_#000000] border-2 border-black hover:bg-surface-container-high transition-all cursor-pointer font-bold text-center"
+                >
+                  Confirm Order
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </AnimatePresence>
   );
 };

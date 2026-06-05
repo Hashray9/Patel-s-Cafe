@@ -369,6 +369,14 @@ export const CafeProvider: React.FC<{ children: React.ReactNode }> = ({ children
       : tables.find(t => t.id === tableId);
     if (!table) return;
 
+    if (items.length === 0) {
+      setOrders(prev => prev.filter(o => !(o.tableId === tableId && o.status !== 'paid')));
+      if (!isWalkIn) {
+        setTables(prev => prev.map(t => t.id === tableId ? { ...t, status: 'available', currentOrderId: undefined, timerStart: undefined } : t));
+      }
+      return;
+    }
+
     const sub = items.reduce((acc, curr) => {
       const item = menu.find(m => m.id === curr.menuItemId);
       return acc + (item ? item.price * curr.quantity : 0);

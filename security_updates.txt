@@ -19,6 +19,8 @@ Patel's Cafe PWA is a serverless frontend-only web application run entirely in t
 - [2026-05-30] Upgraded localStorage keys configuration to _v5 for clean state cache migration, preventing parsing collisions or application crash hazards when reading legacy cached menu structures, and forcing load of the new menu items with image attributes.
 - [2026-05-30] Enforced type-safe image URL and local path assignment with input sanitization in MenuModal to mitigate potential XSS injection vectors via custom img src links.
 - [2026-05-30] Removed special notes input field ("add description") from OrderPanel to simplify ordering interface flow.
+- [2026-05-31] Configured client-side PDF compilation using jsPDF, keeping transaction analytics parsing completely local to the user's browser, preventing external data leaks or dependency on third-party print microservices.
+- [2026-06-05] Added input list integrity check in CafeContext.createOrder to automatically delete active order and clear tables when the order's items list becomes empty, preventing orphan empty order records and stale table occupancy states in localStorage.
 
 === DEPENDENCY VULNERABILITY UPDATES ===
 - Tracked via 'npm audit' to identify risk levels of nested dependencies.

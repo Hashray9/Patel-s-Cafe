@@ -15,10 +15,10 @@ Patel's Cafe PWA is a serverless, single-page progressive web application built 
    - Barista/Waiter selects active table -> opens order panel displaying menu items in a clean grid layout.
    - Categories can be filtered without active button shadows for a cleaner look.
    - Each menu card displays an always-visible incremental/decremental quantity selector (quantity starts at 0, decrementing below 1 removes it from active list, minus is disabled at 0).
-   - Prices, taxes, and total billing are displayed and calculated strictly in Indian Rupees (₹).
+   - Prices, taxes, and total billing are calculated strictly in Indian Rupees (₹). To keep the order-taking panel clean, the panel bottom hides running totals and shows a "Table X order" or "Walk-in order" button. Clicking this button opens an overlay summary card showing the item names, quantities, unit prices, unit totals, and overall billing figures.
    - Submit Order -> updates table state to 'Occupied' (if not already) -> stores active order in order queue. Walk-in takeaway/counter orders are registered with a mock table state that bypasses seated table occupancy.
    - Active orders queue lists unpaid orders in collapsible cards segmented by a toggle switcher: "Table Orders" and "Walk-in Orders".
-   - Each card contains an "Update Order" button that opens the ordering drawer (which updates the existing active order with additions/removals) and a "Mark Paid" button that completes the table checkout, clearing order details and resetting table status to 'Available' (no-op for walk-ins).
+   - Each card contains an "Add Item" button (renamed from "Update Order") that opens the ordering drawer to add more items. While viewing the collapsible order summary, users can adjust quantities using plus/minus buttons or remove items directly using a trash icon. Decrementing quantity to zero or removing the last item deletes the order and clears the table status. A "Mark Paid" button completes the table checkout, clearing order details and resetting table status to 'Available' (no-op for walk-ins).
 
 3. Menu Item Administration Flow:
    - User views Menu screen -> searches or filters by category (Sandwich, Slice, Pizza, Maggi, Milkshake, Puff, Bhel, French Fries, Burger, Tea/Coffee, Thepla/Paratha, Extra).
@@ -35,6 +35,7 @@ Patel's Cafe PWA is a serverless, single-page progressive web application built 
    - Render bars in cycling vibrant Neo-Brutalist colors (Yellow, Green, Pink, Purple, Blue, Orange, Teal, Coral) with height bounds mapping exactly to parent height parameters.
    - Provides a fullscreen toggle trigger on the chart card that enters browser-level fullscreen and requests screen orientation lock to force landscape display on device screens.
    - Highlights the top three standby performers and supports item-specific queries to track total volumes and total earnings (clean stats display without descriptions).
+    - Provides a PDF generation flow triggered by a PDF icon button in the deep-dive card header. It loops through all menu categories, groups and sorts items within each category, calculates sub-totals for each category, and renders a category-wise bifurcated sales report with alternating row colors, category headers, sub-totals, and a grand total summary row at the bottom, triggering a browser download of the compiled PDF.
 
 === ERROR HANDLING STRATEGIES ===
 - LocalStorage Fallback: In-memory store fallback if browser disables localStorage (e.g. private tabs).

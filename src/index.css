@@ -116,17 +116,14 @@
 
 /* Custom scrollbars */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: #f5ede3;
-  border-left: 3px solid #000000;
-  border-bottom: 3px solid #000000;
 }
 ::-webkit-scrollbar-thumb {
   background: #7f7666;
-  border: 3px solid #000000;
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
