@@ -107,7 +107,7 @@ export const MenuModal: React.FC<MenuModalProps> = ({ item, onClose }) => {
               </label>
               <input
                 type="text"
-                placeholder="e.g. /images/grilled_sandwich.png"
+                placeholder="e.g. /images/grilled_sandwich.webp"
                 value={image}
                 onChange={e => setImage(e.target.value)}
                 className="w-full neo-brutal-input text-[14px]"
