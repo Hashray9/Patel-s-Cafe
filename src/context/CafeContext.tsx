@@ -15,6 +15,9 @@ interface CafeContextType {
   updateSettings: (settings: Settings) => void;
   clearTable: (tableId: string) => void;
   simulateData: () => void;
+  addTable: (table: Omit<Table, 'id' | 'status' | 'currentOrderId' | 'timerStart'>) => void;
+  removeTable: (tableId: string) => void;
+  seatGroup: (tableIds: string[]) => void;
 }
 
 const CafeContext = createContext<CafeContextType | undefined>(undefined);
@@ -328,14 +331,16 @@ export const CafeProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let updated = false;
     const newTables = tables.map(t => {
-      const activeOrder = orders.find(o => o.tableId === t.id && o.status !== 'paid');
+      const activeOrder = t.currentOrderId
+        ? orders.find(o => o.id === t.currentOrderId && o.status !== 'paid')
+        : orders.find(o => o.tableId === t.id && o.status !== 'paid');
       if (activeOrder && t.currentOrderId !== activeOrder.id) {
         updated = true;
         return { ...t, currentOrderId: activeOrder.id, status: 'occupied' as const };
       }
       if (!activeOrder && t.status === 'occupied' && t.currentOrderId) {
         updated = true;
-        return { ...t, currentOrderId: undefined, status: 'available' as const, timerStart: undefined };
+        return { ...t, currentOrderId: undefined, status: 'available' as const, timerStart: undefined, groupId: undefined };
       }
       return t;
     });
@@ -365,14 +370,20 @@ export const CafeProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const createOrder = (tableId: string, items: OrderItem[]) => {
     const isWalkIn = tableId.startsWith('walk-in');
     const table = isWalkIn
-      ? { number: 'Walk-in' }
+      ? { number: 'Walk-in', currentOrderId: undefined }
       : tables.find(t => t.id === tableId);
     if (!table) return;
 
+    const existingActiveOrder = !isWalkIn && table.currentOrderId
+      ? orders.find(o => o.id === table.currentOrderId && o.status !== 'paid')
+      : orders.find(o => o.tableId === tableId && o.status !== 'paid');
+
     if (items.length === 0) {
-      setOrders(prev => prev.filter(o => !(o.tableId === tableId && o.status !== 'paid')));
+      if (existingActiveOrder) {
+        setOrders(prev => prev.filter(o => o.id !== existingActiveOrder.id));
+      }
       if (!isWalkIn) {
-        setTables(prev => prev.map(t => t.id === tableId ? { ...t, status: 'available', currentOrderId: undefined, timerStart: undefined } : t));
+        clearTable(tableId);
       }
       return;
     }
@@ -384,8 +395,6 @@ export const CafeProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const taxVal = parseFloat((sub * settings.taxRate).toFixed(2));
     const totalVal = parseFloat((sub * (1 + settings.taxRate)).toFixed(2));
-
-    const existingActiveOrder = orders.find(o => o.tableId === tableId && o.status !== 'paid');
 
     if (existingActiveOrder) {
       setOrders(prev => prev.map(o => o.id === existingActiveOrder.id ? {
@@ -432,7 +441,24 @@ export const CafeProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const clearTable = (tableId: string) => {
-    setTables(prev => prev.map(t => t.id === tableId ? { ...t, status: 'available', currentOrderId: undefined, timerStart: undefined } : t));
+    const table = tables.find(t => t.id === tableId);
+    if (table && table.groupId) {
+      setTables(prev => prev.map(t => t.groupId === table.groupId ? {
+        ...t,
+        status: 'available',
+        currentOrderId: undefined,
+        groupId: undefined,
+        timerStart: undefined
+      } : t));
+    } else {
+      setTables(prev => prev.map(t => t.id === tableId ? {
+        ...t,
+        status: 'available',
+        currentOrderId: undefined,
+        groupId: undefined,
+        timerStart: undefined
+      } : t));
+    }
   };
 
   const updateMenuItem = (updatedItem: MenuItem) => {
@@ -449,6 +475,67 @@ export const CafeProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateSettings = (newSettings: Settings) => {
     setSettings(newSettings);
+  };
+
+  const addTable = (tableData: Omit<Table, 'id' | 'status' | 'currentOrderId' | 'timerStart'>) => {
+    const exists = tables.some(t => t.number.toLowerCase() === tableData.number.toLowerCase());
+    if (exists) {
+      throw new Error(`Table number ${tableData.number} already exists.`);
+    }
+    const newTable: Table = {
+      ...tableData,
+      id: `t-${Date.now()}`,
+      status: 'available'
+    };
+    setTables(prev => [...prev, newTable]);
+  };
+
+  const removeTable = (tableId: string) => {
+    const table = tables.find(t => t.id === tableId);
+    if (!table) return;
+    if (table.status === 'occupied') {
+      throw new Error(`Cannot remove table ${table.number} because it is occupied.`);
+    }
+    setTables(prev => prev.filter(t => t.id !== tableId));
+  };
+
+  const seatGroup = (tableIds: string[]) => {
+    if (tableIds.length === 0) return;
+    
+    const groupTables = tables.filter(t => tableIds.includes(t.id));
+    if (groupTables.length === 0) return;
+
+    const groupId = `g-${Date.now()}`;
+    const orderId = `ord-${Date.now()}`;
+    const tableNumbers = groupTables.map(t => t.number).sort((a, b) => a.localeCompare(b));
+    const combinedLabel = tableNumbers.join(' + ');
+
+    const newOrder: Order = {
+      id: orderId,
+      tableId: tableIds[0],
+      tableNumber: combinedLabel,
+      items: [],
+      status: 'pending',
+      timestamp: Date.now(),
+      subtotal: 0,
+      tax: 0,
+      total: 0
+    };
+
+    setOrders(prev => [...prev, newOrder]);
+
+    setTables(prev => prev.map(t => {
+      if (tableIds.includes(t.id)) {
+        return {
+          ...t,
+          status: 'occupied',
+          currentOrderId: orderId,
+          groupId: groupId,
+          timerStart: Date.now()
+        };
+      }
+      return t;
+    }));
   };
 
   const simulateData = () => {
@@ -524,7 +611,10 @@ export const CafeProvider: React.FC<{ children: React.ReactNode }> = ({ children
       addMenuItem,
       updateSettings,
       clearTable,
-      simulateData
+      simulateData,
+      addTable,
+      removeTable,
+      seatGroup
     }}>
       {children}
     </CafeContext.Provider>

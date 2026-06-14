@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { TrendingUp, Calendar, Award, Coffee, Activity, ChevronDown, FileText } from 'lucide-react';
+import { TrendingUp, Calendar, Award, Activity, ChevronDown, FileText } from 'lucide-react';
 import { useCafe } from '../context/CafeContext';
 import { jsPDF } from 'jspdf';
 
@@ -105,58 +105,7 @@ export const ReportsView: React.FC = () => {
 
   // Custom Dropdown Open States
   const [isMonthDropdownOpen, setIsMonthDropdownOpen] = useState(false);
-  const [isItemDropdownOpen, setIsItemDropdownOpen] = useState(false);
 
-
-
-
-  // Individual Item Selection State
-  const [selectedItemId, setSelectedItemId] = useState<string>('');
-
-  useEffect(() => {
-    if (menu.length > 0 && !selectedItemId) {
-      setSelectedItemId(menu[0].id);
-    }
-  }, [menu, selectedItemId]);
-
-  // Selected Item Global Sales Metrics
-  const individualPerformance = useMemo(() => {
-    if (!selectedItemId) return null;
-
-    const menuItem = menu.find(m => m.id === selectedItemId);
-    if (!menuItem) return null;
-
-    let totalQty = 0;
-    let totalRevenue = 0;
-    let lastOrdered: number | null = null;
-    const monthlyTrend: { [month: string]: number } = {};
-
-    orders.forEach(o => {
-      if (o.status === 'paid') {
-        const d = new Date(o.timestamp);
-        const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-
-        o.items.forEach(item => {
-          if (item.menuItemId === selectedItemId) {
-            totalQty += item.quantity;
-            totalRevenue += item.quantity * menuItem.price;
-            if (!lastOrdered || o.timestamp > lastOrdered) {
-              lastOrdered = o.timestamp;
-            }
-            monthlyTrend[monthKey] = (monthlyTrend[monthKey] || 0) + item.quantity;
-          }
-        });
-      }
-    });
-
-    return {
-      item: menuItem,
-      totalQty,
-      totalRevenue,
-      lastOrdered,
-      monthlyTrend,
-    };
-  }, [orders, menu, selectedItemId]);
   const handleGeneratePDF = () => {
     const doc = new jsPDF();
     const storeName = settings.storeName || "Brew & Bold";
@@ -441,7 +390,7 @@ export const ReportsView: React.FC = () => {
             </span>
             <Activity size={16} className="text-black stroke-[2.5] hidden sm:block" />
           </div>
-          <div className="font-headline-md text-[16px] sm:text-[20px] md:text-[28px] font-bold mt-auto leading-none truncate">
+          <div className="font-headline-md text-[24px] sm:text-[32px] md:text-[40px] font-bold mt-auto leading-none truncate">
             {settings.currency}{todayRevenue.toFixed(2)}
           </div>
         </div>
@@ -454,7 +403,7 @@ export const ReportsView: React.FC = () => {
             </span>
             <TrendingUp size={16} className="text-black stroke-[2.5] hidden sm:block" />
           </div>
-          <div className="font-headline-md text-[16px] sm:text-[20px] md:text-[28px] font-bold mt-auto leading-none truncate">
+          <div className="font-headline-md text-[24px] sm:text-[32px] md:text-[40px] font-bold mt-auto leading-none truncate">
             {settings.currency}{monthStats.revenue.toFixed(2)}
           </div>
         </div>
@@ -516,102 +465,14 @@ export const ReportsView: React.FC = () => {
         </div>
       </div>
 
-      {/* Individual Item Performance Analytics Section */}
-      <div className="neo-brutal-card rounded-xl p-6 bg-white text-black space-y-4 select-none">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b-2 border-black pb-2.5">
-          <div className="flex items-center justify-between w-full sm:w-auto">
-            <h3 className="font-headline-md text-[18px] font-bold flex items-center gap-2">
-              <Coffee size={18} className="stroke-[2.5] text-secondary" />
-              Individual Item Deep-Dive
-            </h3>
-
-            {/* Mobile PDF Button */}
-            <button
-              type="button"
-              onClick={handleGeneratePDF}
-              className="sm:hidden p-1.5 rounded-lg border-2 border-black bg-white hover:bg-surface-container-high transition-all shadow-[2px_2px_0px_0px_#000000] active:translate-x-[0.5px] active:translate-y-[0.5px] active:shadow-none cursor-pointer flex items-center justify-center"
-              title="Download PDF Report"
-            >
-              <FileText size={15} className="stroke-[2.5] text-black" />
-            </button>
-          </div>
-
-          <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
-            {/* Custom Item Dropdown */}
-            <div className="relative w-full sm:w-auto">
-              <button
-                type="button"
-                onClick={() => setIsItemDropdownOpen(!isItemDropdownOpen)}
-                className="neo-brutal-input py-1.5 pr-8 pl-3 font-bold text-[13.5px] bg-white text-black shadow-[2px_2px_0px_0px_#000000] border-2 border-black rounded-lg capitalize cursor-pointer flex items-center justify-between min-w-[185px] w-full sm:w-auto relative select-none hover:bg-surface-container-low transition-colors active:translate-x-[0.5px] active:translate-y-[0.5px] active:shadow-none"
-              >
-                <span>{menu.find(m => m.id === selectedItemId)?.name || 'Select Item'}</span>
-                <ChevronDown size={14} className={`absolute right-3 top-1/2 -translate-y-1/2 transition-transform duration-200 stroke-[2.5] ${isItemDropdownOpen ? 'rotate-180' : ''}`} />
-              </button>
-
-              {isItemDropdownOpen && (
-                <>
-                  {/* Click-away backdrop */}
-                  <div className="fixed inset-0 z-40 cursor-default" onClick={() => setIsItemDropdownOpen(false)} />
-
-                  {/* Options List */}
-                  <div className="absolute right-0 top-full mt-1.5 min-w-[200px] w-full bg-white border-2 border-black rounded-lg shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] overflow-hidden z-50 max-h-60 overflow-y-auto">
-                    {menu.map(item => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => {
-                          setSelectedItemId(item.id);
-                          setIsItemDropdownOpen(false);
-                        }}
-                        className={`w-full px-3.5 py-2 font-bold text-[13px] text-left text-black hover:bg-surface-container-high transition-colors capitalize border-b last:border-b-0 border-on-surface/10 ${selectedItemId === item.id ? 'bg-primary-container' : 'bg-white'
-                          }`}
-                      >
-                        {item.name}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-
-            {/* Desktop PDF Button */}
-            <button
-              type="button"
-              onClick={handleGeneratePDF}
-              className="hidden sm:flex p-1.5 rounded-lg border-2 border-black bg-white hover:bg-surface-container-high transition-all shadow-[2px_2px_0px_0px_#000000] active:translate-x-[0.5px] active:translate-y-[0.5px] active:shadow-none cursor-pointer items-center justify-center"
-              title="Download PDF Report"
-            >
-              <FileText size={15} className="stroke-[2.5] text-black" />
-            </button>
-          </div>
-        </div>
-
-        {individualPerformance ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-1">
-            <div className="space-y-1.5">
-              <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
-                Total Units Dispatched
-              </span>
-              <div className="font-headline-md text-[26px] font-bold leading-none text-black flex items-center gap-1.5">
-                {individualPerformance.totalQty} Units
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
-                Total Earnings Earned
-              </span>
-              <div className="font-headline-md text-[26px] font-bold leading-none text-black">
-                {settings.currency}{individualPerformance.totalRevenue.toFixed(2)}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <p className="font-body-md text-on-surface-variant font-medium text-center py-6">
-            Item details unavailable.
-          </p>
-        )}
-      </div>
+      <button
+        type="button"
+        onClick={handleGeneratePDF}
+        className="w-full neo-brutal-btn bg-[#ffd982] text-black py-2.5 rounded-lg font-bold text-[14px] flex items-center justify-center gap-2 border-2 border-black shadow-[3px_3px_0px_0px_#000000] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none cursor-pointer select-none"
+      >
+        <FileText size={16} className="stroke-[2.5]" />
+        Full Report
+      </button>
     </div>
   );
 };

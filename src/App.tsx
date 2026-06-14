@@ -11,13 +11,13 @@ import { MenuModal } from './components/MenuModal';
 import { ReportsView } from './components/ReportsView';
 import type { Table, MenuItem } from './types';
 import {
-  Sparkles,
   Plus,
   Search,
   ReceiptText,
   PlusCircle,
   Sliders,
-  RefreshCw
+  Armchair,
+  Trash2
 } from 'lucide-react';
 
 const DashboardContent: React.FC = () => {
@@ -27,7 +27,8 @@ const DashboardContent: React.FC = () => {
     menu,
     settings,
     updateSettings,
-    simulateData
+    addTable,
+    removeTable
   } = useCafe();
 
   const [activeTab, setActiveTab] = useState('home');
@@ -47,6 +48,64 @@ const DashboardContent: React.FC = () => {
 
   // Orders queue view filter: 'table' = Seated Table orders, 'walk-in' = Counter/Walk-in orders
   const [ordersView, setOrdersView] = useState<'table' | 'walk-in'>('table');
+
+  // Add Table states
+  const [newTableNumber, setNewTableNumber] = useState('');
+  const [newTableCapacity, setNewTableCapacity] = useState(4);
+  const [newTableIsOutdoor, setNewTableIsOutdoor] = useState(false);
+  const [tableError, setTableError] = useState('');
+  const [tableSuccess, setTableSuccess] = useState('');
+
+  const handleAddTable = (e: React.FormEvent) => {
+    e.preventDefault();
+    setTableError('');
+    setTableSuccess('');
+
+    if (!newTableNumber.trim()) {
+      setTableError('Table number is required.');
+      return;
+    }
+
+    const formattedNumber = newTableNumber.trim();
+
+    try {
+      addTable({
+        number: formattedNumber,
+        capacity: newTableCapacity,
+        isOutdoor: newTableIsOutdoor
+      });
+      setTableSuccess(`Table ${formattedNumber} added successfully!`);
+      setNewTableNumber('');
+      setNewTableCapacity(4);
+      setNewTableIsOutdoor(false);
+      setTimeout(() => setTableSuccess(''), 3000);
+    } catch (err: any) {
+      setTableError(err.message || 'Failed to add table.');
+    }
+  };
+
+  const handleRemoveTable = (tableId: string, tableNumber: string) => {
+    setTableError('');
+    setTableSuccess('');
+
+    const table = tables.find(t => t.id === tableId);
+    if (!table) return;
+
+    if (table.status === 'occupied') {
+      alert(`Cannot remove Table ${tableNumber} because it is currently occupied with an active order.`);
+      return;
+    }
+
+    if (window.confirm(`Are you sure you want to remove Table ${tableNumber}? This action cannot be undone.`)) {
+      try {
+        removeTable(tableId);
+        setTableSuccess(`Table ${tableNumber} was removed.`);
+        setTimeout(() => setTableSuccess(''), 3000);
+      } catch (err: any) {
+        setTableError(err.message || 'Failed to remove table.');
+      }
+    }
+  };
 
 
 
@@ -159,12 +218,7 @@ const DashboardContent: React.FC = () => {
                     <div className="neo-brutal-card rounded-xl p-12 bg-surface text-center max-w-md mx-auto space-y-4">
                       <ReceiptText size={48} className="mx-auto text-on-surface-variant/40 stroke-[1.5]" />
                       <h3 className="font-headline-md text-headline-md text-on-surface">No Active Orders</h3>
-                      <p className="font-body-md text-on-surface-variant font-medium">
-                        {ordersView === 'table'
-                          ? "No active table orders at the moment. Seat walk-in guests at tables to assign orders."
-                          : "No active counter or walk-in takeaway orders. Click '+ New Walk-in Order' to create one."
-                        }
-                      </p>
+
                       {ordersView === 'table' && (
                         <button
                           onClick={() => setActiveTab('home')}
@@ -323,26 +377,134 @@ const DashboardContent: React.FC = () => {
               </div>
             </div>
 
-            {/* Diagnostics and Mock data Feed */}
-            <div className="neo-brutal-card bg-surface rounded-xl p-6 space-y-4">
-              <h3 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2 border-b-2 border-on-surface pb-2">
-                <RefreshCw size={18} className="stroke-[2.5] text-primary" />
-                Data Simulation Mode
+            {/* Manage Tables Card */}
+            <div className="neo-brutal-card bg-surface rounded-xl p-6 space-y-6">
+              <h3 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2 border-b-2 border-on-surface pb-2 select-none">
+                <Armchair size={20} className="stroke-[2.5]" />
+                Manage Tables
               </h3>
-              <p className="font-body-md text-[14px] text-on-surface-variant font-medium">
-                Need to demonstrate the app with active customers? The simulation tool will populate dummy seated orders, timers, and reservations.
-              </p>
 
-              <button
-                onClick={() => {
-                  simulateData();
-                  alert("Live mock feed simulated! Head to Floor Plan or Orders page.");
-                }}
-                className="w-full neo-brutal-btn bg-secondary-container text-on-secondary-container py-3 rounded-lg font-label-bold text-[14px] flex items-center justify-center gap-2"
-              >
-                <Sparkles size={16} className="stroke-[2.5] text-secondary" />
-                Populate Live Mock Feed
-              </button>
+              {/* Success and Error Alerts */}
+              {tableError && (
+                <div className="p-3 bg-[#ffdad6] text-[#ba1a1a] border-2 border-black rounded-lg font-bold text-[14px]">
+                  {tableError}
+                </div>
+              )}
+              {tableSuccess && (
+                <div className="p-3 bg-[#b2f0cf] text-[#006e3a] border-2 border-black rounded-lg font-bold text-[14px]">
+                  {tableSuccess}
+                </div>
+              )}
+
+              {/* Table List */}
+              <div className="space-y-3">
+                <h4 className="font-label-bold text-label-bold text-on-surface select-none">
+                  Current Tables ({tables.length})
+                </h4>
+                {tables.length === 0 ? (
+                  <p className="text-on-surface-variant font-medium text-[14px] italic py-2">
+                    No tables configured. Add a table below.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[280px] overflow-y-auto pr-1 no-scrollbar">
+                    {tables.map(table => {
+                      const isOccupied = table.status === 'occupied';
+                      return (
+                        <div
+                          key={table.id}
+                          className={`flex items-center justify-between p-3.5 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_#000000] transition-all ${
+                            isOccupied ? 'bg-[#ffdad6]' : 'bg-[#b2f0cf]'
+                          }`}
+                        >
+                          <div className="flex flex-col">
+                            <span className="font-headline-md font-bold text-[18px] text-black">
+                              Table {table.number}
+                            </span>
+                            <span className="text-[12px] font-semibold text-black/70 flex items-center gap-1 mt-0.5">
+                              {table.capacity} Seaters • {table.isOutdoor ? 'Outdoor' : 'Indoor'}
+                              {isOccupied && (
+                                <span className="bg-[#ba1a1a] text-white px-1.5 py-0.2 rounded text-[10px] uppercase font-extrabold border border-black ml-1.5">
+                                  Occupied
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => handleRemoveTable(table.id, table.number)}
+                            className="p-2 bg-white text-black hover:bg-error-container hover:text-error border-2 border-black rounded-lg shadow-[2px_2px_0px_0px_#000000] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none transition-all cursor-pointer"
+                            title={`Delete Table ${table.number}`}
+                          >
+                            <Trash2 size={16} className="stroke-[2.5]" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Add Table Form */}
+              <form onSubmit={handleAddTable} className="border-t-2 border-on-surface pt-4.5 space-y-4">
+                <h4 className="font-label-bold text-label-bold text-on-surface select-none">
+                  Add New Table
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block font-label-bold text-[12px] text-on-surface mb-1">
+                      Table Number
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. T-7"
+                      value={newTableNumber}
+                      onChange={e => setNewTableNumber(e.target.value)}
+                      className="w-full neo-brutal-input text-[14px] py-2 px-3 rounded-lg"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-label-bold text-[12px] text-on-surface mb-1">
+                      Capacity (Seaters)
+                    </label>
+                    <select
+                      value={newTableCapacity}
+                      onChange={e => setNewTableCapacity(parseInt(e.target.value))}
+                      className="w-full neo-brutal-input text-[14px] py-2 px-3 rounded-lg bg-surface border-2 border-black font-semibold shadow-[2px_2px_0px_0px_#000000]"
+                    >
+                      <option value={2}>2 Seater</option>
+                      <option value={4}>4 Seater</option>
+                      <option value={6}>6 Seater</option>
+                      <option value={8}>8 Seater</option>
+                      <option value={10}>10 Seater</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block font-label-bold text-[12px] text-on-surface mb-1">
+                      Zone / Location
+                    </label>
+                    <div className="flex items-center h-10 gap-4">
+                      <label className="flex items-center gap-2 font-body-md text-[14px] cursor-pointer font-bold select-none">
+                        <input
+                          type="checkbox"
+                          checked={newTableIsOutdoor}
+                          onChange={e => setNewTableIsOutdoor(e.target.checked)}
+                          className="w-4 h-4 accent-primary cursor-pointer"
+                        />
+                        Outdoor Area
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full neo-brutal-btn bg-primary-container text-on-primary-container py-3 rounded-lg font-label-bold text-[14px] flex items-center justify-center gap-2 cursor-pointer shadow-[3px_3px_0px_0px_#000000] border-2 border-black"
+                >
+                  <Plus size={16} className="stroke-[3]" />
+                  Add Table to Floor
+                </button>
+              </form>
             </div>
           </div>
         )}

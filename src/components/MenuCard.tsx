@@ -10,6 +10,9 @@ interface MenuCardProps {
 
 export const MenuCard: React.FC<MenuCardProps> = ({ item, onEdit }) => {
   const { updateMenuItem, settings } = useCafe();
+  const nameMatch = item.name.match(/^(.*?)\s*(\(.*?\))$/);
+  const mainName = nameMatch ? nameMatch[1] : item.name;
+  const modifier = nameMatch ? nameMatch[2] : '';
 
   const handleToggleAvailability = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -56,8 +59,13 @@ export const MenuCard: React.FC<MenuCardProps> = ({ item, onEdit }) => {
           <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
             {item.category}
           </span>
-          <h4 className="font-label-bold text-[14px] text-black leading-tight line-clamp-2">
-            {item.name}
+          <h4 className="text-black leading-tight line-clamp-2 min-h-[38px] flex flex-wrap items-center">
+            <span className="font-extrabold text-[15.5px]">{mainName}</span>
+            {modifier && (
+              <span className="text-[12px] font-bold text-on-surface-variant/75 ml-1 select-none">
+                {modifier}
+              </span>
+            )}
           </h4>
           <div className="flex gap-1 pt-0.5">
             {item.dietary.map(diet => (

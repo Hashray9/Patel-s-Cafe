@@ -7,14 +7,18 @@ Patel's Cafe PWA is a serverless, single-page progressive web application built 
 === DETAILED DATA FLOWS ===
 1. Table State & Seating Management Flow:
    - User views Floor Plan -> selects a table.
-   - User updates table occupancy status (Seats walk-in guest or checks out bill).
+   - User updates table occupancy status (Seats guests via 'Individual' or 'Group' buttons, or checks out bills).
    - State handler updates table object status in the database -> triggers local storage sync -> re-renders floor plan layout.
-   - Layout Rendering Flow: Seating is rendered in a bento layout. Standard table list contains T-1 through T-6, keeping layout aligned.
+   - Layout Rendering Flow: Seating is rendered in a bento layout. Custom tables are dynamically mapped, and outdoor tables utilize a double-column span (`col-span-2`). Linked group tables render a visual group badge (`🔗 Group`) and are color-coordinated based on a hash of their `groupId` to show visual connectivity.
+   - Seating Group Flow: Users open the table modal and select the "Group" option. An interactive mini-floor plan of the restaurant is shown where they tap the table nodes visually. Toggling nodes dynamically sums seat capacity. When saved, linked tables share a single `groupId` and consolidated `currentOrderId`. Clicking any table in the group loads the joint active order. Clearing or finalizing the bill on one group table clears all other tables in the group simultaneously.
+   - Custom Table Management: Admins add or delete tables in the Settings panel.
+     - Adding a table validates uniqueness and generates a unique ID, synchronizing it with LocalStorage.
+     - Deleting a table filters it out from the layout state. Deleting occupied tables is strictly blocked to maintain active order integrity.
 
 2. Order Lifecycle & Billing Flow:
    - Barista/Waiter selects active table -> opens order panel displaying menu items in a grid layout with a top-level search bar.
    - Categories can be filtered without active button shadows for a cleaner look.
-   - Each menu card displays an always-visible incremental/decremental quantity selector (quantity starts at 0, decrementing below 1 removes it from active list, minus is disabled at 0).
+   - Each menu card displays an always-visible incremental/decremental quantity selector (quantity starts at 0, decrementing below 1 removes it from active list, minus is disabled at 0). The item name is parsed dynamically, rendering the specific item name in a bold, larger font and modifier parentheticals in a smaller, lighter font. The card headings are bound to a min-height of 38px with flex styling to align all cards uniformly.
    - Prices, taxes, and total billing are calculated strictly in Indian Rupees (₹). To keep the order-taking panel clean, the panel bottom hides running totals and shows a "Table X order" or "Walk-in order" button. Clicking this button opens an overlay summary card showing the item names, quantities, unit prices, unit totals, and overall billing figures.
    - Submit Order -> updates table state to 'Occupied' (if not already) -> stores active order in order queue. Walk-in takeaway/counter orders are registered with a mock table state that bypasses seated table occupancy.
    - Active orders queue lists unpaid orders in collapsible cards segmented by a toggle switcher: "Table Orders" and "Walk-in Orders".
@@ -30,12 +34,12 @@ Patel's Cafe PWA is a serverless, single-page progressive web application built 
 
 4. Performance Analytics & Reports Flow:
    - User selects Reports tab -> reads paid order list from CafeContext state.
-   - Filters and aggregates orders to compute: today's revenue (current day timestamps), month-to-date sales, average order value (AOV, dividing total sales by order counts), and transaction volume.
+   - Filters and aggregates orders to compute: today's revenue (current day timestamps), month-to-date sales, average order value (AOV, dividing total sales by order counts), and transaction volume. These metrics are displayed using prominent, large typography to ensure they are clearly visible at a single glance.
    - Computes vertical bar coordinates relative to dynamic Y-axis metrics (computed tick levels representing units sold) and logs them against X-axis item/category labels in a scrollable bar chart wrapper.
    - Render bars in cycling vibrant Neo-Brutalist colors (Yellow, Green, Pink, Purple, Blue, Orange, Teal, Coral) with height bounds mapping exactly to parent height parameters.
    - Provides a fullscreen toggle trigger on the chart card that enters browser-level fullscreen and requests screen orientation lock to force landscape display on device screens.
-   - Highlights the top three standby performers and supports item-specific queries to track total volumes and total earnings (clean stats display without descriptions).
-    - Provides a PDF generation flow triggered by a PDF icon button in the deep-dive card header. It loops through all menu categories, groups and sorts items within each category, calculates sub-totals for each category, and renders a category-wise bifurcated sales report with alternating row colors, category headers, sub-totals, and a grand total summary row at the bottom, triggering a browser download of the compiled PDF.
+   - Highlights the top three standby performers and renders a compact "Full Report" button of reduced height providing user-triggered download actions for client-side PDF sales reports.
+   - Provides a PDF generation flow triggered by a PDF icon button in the deep-dive card header. It loops through all menu categories, groups and sorts items within each category, calculates sub-totals for each category, and renders a category-wise bifurcated sales report with alternating row colors, category headers, sub-totals, and a grand total summary row at the bottom, triggering a browser download of the compiled PDF.
 
 === ERROR HANDLING STRATEGIES ===
 - LocalStorage Fallback: In-memory store fallback if browser disables localStorage (e.g. private tabs).

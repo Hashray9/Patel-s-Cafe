@@ -21,6 +21,16 @@ Patel's Cafe PWA is a serverless frontend-only web application run entirely in t
 - [2026-05-30] Removed special notes input field ("add description") from OrderPanel to simplify ordering interface flow.
 - [2026-05-31] Configured client-side PDF compilation using jsPDF, keeping transaction analytics parsing completely local to the user's browser, preventing external data leaks or dependency on third-party print microservices.
 - [2026-06-05] Added input list integrity check in CafeContext.createOrder to automatically delete active order and clear tables when the order's items list becomes empty, preventing orphan empty order records and stale table occupancy states in localStorage.
+- [2026-06-14] Implemented custom table addition and removal under Settings view, enforcing strict validation checks (non-empty table numbers, duplicate number collision block, positive capacity bounds) and occupancy safety guards to prevent deleting tables with active unpaid orders.
+- [2026-06-14] Removed the Data Simulation Mode card and triggers from the Settings interface to secure the application database state and prevent accidental overrides of live order history.
+- [2026-06-14] Integrated group table seating and consolidated billing operations, ensuring that linked group tables share a single active order reference, and updating order-clearing & checkout operations to atomically reset all tables in a group, preventing state mismatch or orphan unpaid order structures.
+- [2026-06-14] Enforced type-safe color-coding and layout constraints in the interactive floor plan mini-map selector, preventing the selection of occupied tables, bounds-checking seat capacity calculations, and securing the group table linkage database operations.
+- [2026-06-14] Refactored seating options in TableModal to distinct 'Individual' (User icon) and 'Group' (Users icon) buttons, simplifying code structure, improving interface accessibility, and removing unused Play icon dependency.
+- [2026-06-14] Enlarged numeric value text elements within ReportsView's overview cards (Today's Sales, Month Sales MTD) and deep-dive analytics cards to text-[24px]/text-[32px]/text-[40px] respectively, significantly improving information readability at a glance.
+- [2026-06-14] Refactored ReportsView's individual item deep-dive section into a static "Report" summary card, removing the custom item selector dropdown and unused state variables to reduce interface clutter and improve performance.
+- [2026-06-14] Removed numerical statistic display elements (total units sold, total earnings) from the static "Report" card in ReportsView to simplify report download layout and deleted unused calculation variables to satisfy strict compiler configurations.
+- [2026-06-14] Replaced the Report card in ReportsView with a compact "Full Report" button of reduced height (py-2.5) to avoid screen scrolling and removed unused Coffee icon imports to optimize bundle assets.
+- [2026-06-14] Refactored menu card titles in MenuCard and OrderPanel to dynamically split main item names and parenthetical modifiers, applying larger font weights and sizes to names for better readability, and binding headings to a min-height of 38px to keep card dimensions uniform.
 
 === DEPENDENCY VULNERABILITY UPDATES ===
 - Tracked via 'npm audit' to identify risk levels of nested dependencies.

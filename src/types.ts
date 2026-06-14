@@ -6,6 +6,7 @@ export interface Table {
   currentOrderId?: string;
   timerStart?: number; // timestamp when table became occupied
   isOutdoor?: boolean;
+  groupId?: string;
 }
 
 export interface MenuItem {

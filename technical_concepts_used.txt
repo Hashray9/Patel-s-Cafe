@@ -15,4 +15,6 @@
 - Dynamic Image Asset Mapping & Neo-Brutalist Fallbacks: Categories mapped to generated high-quality food photography files (`public/images/`) with customized fallback placeholders showing category abbreviations when no image URL is provided.
 - jsPDF Client-Side Document Export: Pure-JS client-side PDF compilation used to generate and download beautifully structured, tabulated sales metrics and menu databases offline.
 - Nested Modal Overlays: Managing multiple concurrent overlay layers (e.g., order summary popup card over the sliding order drawer panel) using z-index ordering and independent Framer Motion animations to prevent backdrop collision.
+- Dynamic Seating, Table Linking, and Group Seating Lifecycle Management: State modification handlers (addTable, removeTable, seatGroup) integrated into React Context to support custom physical store expansions/removals, table-linking for joint seating groups with consolidated order syncing, form validation, and collision guards (blocking deletion of occupied seating).
+- Interactive Floor-Plan Map Node Selector: A spatial node selection interface built using CSS grids that represents restaurant table layouts inside dialog views. Nodes are dynamically color-coded based on occupancy and selection states, enabling waiters to link tables visually rather than by plain text lists.
 

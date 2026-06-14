@@ -94,7 +94,7 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ tableId, isOpen, onClose
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex justify-end">
+      <div key="order-drawer" className="fixed inset-0 z-50 flex justify-end">
         {/* Backdrop */}
         <motion.div
           initial={{ opacity: 0 }}
@@ -118,11 +118,7 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ tableId, isOpen, onClose
               <h2 className="font-headline-md text-headline-md leading-none">
                 Order: {isWalkIn ? 'Walk-in' : `Table ${table.number}`}
               </h2>
-              {!isWalkIn && (
-                <p className="font-label-sm text-[11px] mt-1 text-on-primary/90">
-                  Seating capacity: {table.capacity} guests
-                </p>
-              )}
+
             </div>
             <button
               onClick={onClose}
@@ -181,6 +177,9 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ tableId, isOpen, onClose
               <div className="grid grid-cols-2 gap-3.5">
                 {filteredMenu.map(item => {
                   const qty = getItemQty(item.id);
+                  const nameMatch = item.name.match(/^(.*?)\s*(\(.*?\))$/);
+                  const mainName = nameMatch ? nameMatch[1] : item.name;
+                  const modifier = nameMatch ? nameMatch[2] : '';
 
                   return (
                     <div
@@ -213,8 +212,13 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ tableId, isOpen, onClose
                           <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
                             {item.category}
                           </span>
-                          <h4 className="font-label-bold text-[14px] text-black leading-tight line-clamp-2">
-                            {item.name}
+                          <h4 className="text-black leading-tight line-clamp-2 min-h-[38px] flex flex-wrap items-center">
+                            <span className="font-extrabold text-[15.5px]">{mainName}</span>
+                            {modifier && (
+                              <span className="text-[12px] font-bold text-on-surface-variant/75 ml-1 select-none">
+                                {modifier}
+                              </span>
+                            )}
                           </h4>
                           <div className="flex gap-1 pt-0.5">
                             {item.dietary.map(diet => (
@@ -288,7 +292,7 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ tableId, isOpen, onClose
       </div>
 
       {/* Order Summary Popup Card */}
-      <AnimatePresence>
+      <AnimatePresence key="order-summary-presence">
         {isSummaryOpen && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
             {/* Backdrop */}
