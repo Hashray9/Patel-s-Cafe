@@ -49,6 +49,10 @@ const asyncHandler = (fn) => (req, res, next) => {
   Promise.resolve(fn(req, res, next)).catch(next);
 };
 
+app.get('/', (req, res) => {
+  res.json({ status: 'online', message: "Patel's Cafe API Server is running!" });
+});
+
 // ==========================================
 // ⚙️ Settings Endpoints
 // ==========================================
