@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
+import { AnimatePresence } from 'framer-motion';
 import { CafeProvider, useCafe } from './context/CafeContext';
 import { Header } from './components/Header';
 import { Navigation } from './components/Navigation';
@@ -79,8 +80,8 @@ const DashboardContent: React.FC = () => {
       setNewTableCapacity(4);
       setNewTableIsOutdoor(false);
       setTimeout(() => setTableSuccess(''), 3000);
-    } catch (err: any) {
-      setTableError(err.message || 'Failed to add table.');
+    } catch (err: unknown) {
+      setTableError(err instanceof Error ? err.message : 'Failed to add table.');
     }
   };
 
@@ -101,27 +102,25 @@ const DashboardContent: React.FC = () => {
         removeTable(tableId);
         setTableSuccess(`Table ${tableNumber} was removed.`);
         setTimeout(() => setTableSuccess(''), 3000);
-      } catch (err: any) {
-        setTableError(err.message || 'Failed to remove table.');
+      } catch (err: unknown) {
+        setTableError(err instanceof Error ? err.message : 'Failed to remove table.');
       }
     }
   };
 
-
+  const handleOpenOrder = useCallback((tableId: string) => {
+    setActiveOrderTableId(tableId);
+  }, []);
 
   // Quick Action: Place a walk-in counter order
-  const handleQuickWalkIn = () => {
+  const handleQuickWalkIn = useCallback(() => {
     handleOpenOrder('walk-in-' + Date.now());
-  };
+  }, [handleOpenOrder]);
 
-  const handleTableClick = (table: Table) => {
+  const handleTableClick = useCallback((table: Table) => {
     setSelectedTable(table);
     setIsTableModalOpen(true);
-  };
-
-  const handleOpenOrder = (tableId: string) => {
-    setActiveOrderTableId(tableId);
-  };
+  }, []);
 
   return (
     <div className="min-h-screen bg-background text-on-background pb-[88px] md:pb-8 pt-20">
@@ -518,39 +517,89 @@ const DashboardContent: React.FC = () => {
       <Navigation activeTab={activeTab} setActiveTab={setActiveTab} />
 
       {/* MODALS AND PANELS */}
-      {selectedTable && (
-        <TableModal
-          table={selectedTable}
-          isOpen={isTableModalOpen}
-          onClose={() => {
-            setIsTableModalOpen(false);
-            setSelectedTable(null);
-          }}
-          onOpenOrder={handleOpenOrder}
-        />
-      )}
+      <AnimatePresence>
+        {selectedTable && isTableModalOpen && (
+          <TableModal
+            key={selectedTable.id}
+            table={selectedTable}
+            isOpen={isTableModalOpen}
+            onClose={() => {
+              setIsTableModalOpen(false);
+              setSelectedTable(null);
+            }}
+            onOpenOrder={handleOpenOrder}
+          />
+        )}
+      </AnimatePresence>
 
-      {activeOrderTableId && (
-        <OrderPanel
-          tableId={activeOrderTableId}
-          isOpen={activeOrderTableId !== null}
-          onClose={() => setActiveOrderTableId(null)}
-        />
-      )}
+      <AnimatePresence>
+        {activeOrderTableId && (
+          <OrderPanel
+            key={activeOrderTableId}
+            tableId={activeOrderTableId}
+            isOpen={activeOrderTableId !== null}
+            onClose={() => setActiveOrderTableId(null)}
+          />
+        )}
+      </AnimatePresence>
 
-      <MenuModal
-        item={selectedMenuItem}
-        isOpen={isMenuModalOpen}
-        onClose={() => {
-          setIsMenuModalOpen(false);
-          setSelectedMenuItem(undefined);
-        }}
-      />
+      <AnimatePresence>
+        {isMenuModalOpen && (
+          <MenuModal
+            key={selectedMenuItem?.id || 'new'}
+            item={selectedMenuItem}
+            isOpen={isMenuModalOpen}
+            onClose={() => {
+              setIsMenuModalOpen(false);
+              setSelectedMenuItem(undefined);
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 };
 
+import { useEffect } from 'react';
+import { supabase } from './supabaseClient';
+import type { Session } from '@supabase/supabase-js';
+import { Login } from './components/Login';
+
 export const App: React.FC = () => {
+  const [session, setSession] = useState<Session | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Check current session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setLoading(false);
+    });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+          <span className="font-body-md text-sm font-semibold text-on-surface">Initializing system...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <Login />;
+  }
+
   return (
     <CafeProvider>
       <DashboardContent />

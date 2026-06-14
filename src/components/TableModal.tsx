@@ -1,5 +1,5 @@
 import React from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { X, CreditCard, Link, User, Users } from 'lucide-react';
 import type { Table } from '../types';
 import { useCafe } from '../context/CafeContext';
@@ -11,19 +11,12 @@ interface TableModalProps {
   onOpenOrder: (tableId: string) => void;
 }
 
-export const TableModal: React.FC<TableModalProps> = ({ table, isOpen, onClose, onOpenOrder }) => {
+export const TableModal: React.FC<TableModalProps> = ({ table, onClose, onOpenOrder }) => {
   const { updateTableStatus, orders, updateOrderStatus, clearTable, settings, seatGroup, tables } = useCafe();
   const [modalView, setModalView] = React.useState<'main' | 'seat-group'>('main');
   const [selectedTables, setSelectedTables] = React.useState<string[]>([]);
 
-  React.useEffect(() => {
-    if (isOpen) {
-      setModalView('main');
-      setSelectedTables([]);
-    }
-  }, [isOpen]);
 
-  if (!isOpen) return null;
 
   const activeOrder = table.currentOrderId
     ? orders.find(o => o.id === table.currentOrderId && o.status !== 'paid')
@@ -45,8 +38,7 @@ export const TableModal: React.FC<TableModalProps> = ({ table, isOpen, onClose, 
   };
 
   return (
-    <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
         {/* Backdrop overlay */}
         <motion.div
           initial={{ opacity: 0 }}
@@ -186,14 +178,11 @@ export const TableModal: React.FC<TableModalProps> = ({ table, isOpen, onClose, 
                     const isChecked = selectedTables.includes(t.id);
                     
                     // Compute styling for mini-nodes
-                    let nodeStyle = '';
-                    if (isCurrent || isChecked) {
-                      nodeStyle = 'bg-[#ffd982] border-black text-black border-[3px] shadow-[3px_3px_0px_0px_#000000]';
-                    } else if (isOccupied) {
-                      nodeStyle = 'bg-[#ffdad6] border-black/25 text-black/35 cursor-not-allowed border-2 opacity-50';
-                    } else {
-                      nodeStyle = 'bg-surface hover:bg-surface-container-high border-black border-2 cursor-pointer shadow-[2px_2px_0px_0px_#000000]';
-                    }
+                    const nodeStyle = (isCurrent || isChecked)
+                      ? 'bg-[#ffd982] border-black text-black border-[3px] shadow-[3px_3px_0px_0px_#000000]'
+                      : isOccupied
+                        ? 'bg-[#ffdad6] border-black/25 text-black/35 cursor-not-allowed border-2 opacity-50'
+                        : 'bg-surface hover:bg-surface-container-high border-black border-2 cursor-pointer shadow-[2px_2px_0px_0px_#000000]';
 
                     return (
                       <div
@@ -258,7 +247,6 @@ export const TableModal: React.FC<TableModalProps> = ({ table, isOpen, onClose, 
           )}
         </motion.div>
       </div>
-    </AnimatePresence>
   );
 };
 export default TableModal;

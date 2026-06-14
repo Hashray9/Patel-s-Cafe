@@ -1,47 +1,55 @@
 === SYSTEM ARCHITECTURE OVERVIEW ===
-Patel's Cafe PWA is a serverless, single-page progressive web application built entirely on the client side using:
-- React (TSX) for views and layout
-- Tailwind CSS for responsive Neo-Brutalist styling
-- LocalStorage for client-side state persistence
+Patel's Cafe PWA is built on a 3-tier client-server architecture:
+- CLIENT: React SPA (TypeScript) compiled with Vite, using Tailwind CSS for responsive Neo-Brutalist design.
+- API BACKEND: Node/Express server acting as the secure gateway to database resources.
+- DATABASE & AUTH: Supabase PostgreSQL database storing cafe configurations and active/historical records, with Supabase Auth handling session authentication.
+
+=== SECURE COMMUNICATION FLOW ===
+1. User enters email & password on Login screen.
+2. Frontend calls Supabase Auth -> returns active Session token (JWT).
+3. Client context retrieves session token dynamically via `supabase.auth.getSession()` on every state change.
+4. Client adds JWT in header: `Authorization: Bearer <access_token>` for all API fetches.
+5. Express server intercepts incoming requests -> middleware calls `supabase.auth.getUser(<token>)` to verify active session -> attaches user context to `req.user` -> permits request processing or returns 401.
 
 === DETAILED DATA FLOWS ===
 1. Table State & Seating Management Flow:
    - User views Floor Plan -> selects a table.
    - User updates table occupancy status (Seats guests via 'Individual' or 'Group' buttons, or checks out bills).
-   - State handler updates table object status in the database -> triggers local storage sync -> re-renders floor plan layout.
-   - Layout Rendering Flow: Seating is rendered in a bento layout. Custom tables are dynamically mapped, and outdoor tables utilize a double-column span (`col-span-2`). Linked group tables render a visual group badge (`🔗 Group`) and are color-coordinated based on a hash of their `groupId` to show visual connectivity.
-   - Seating Group Flow: Users open the table modal and select the "Group" option. An interactive mini-floor plan of the restaurant is shown where they tap the table nodes visually. Toggling nodes dynamically sums seat capacity. When saved, linked tables share a single `groupId` and consolidated `currentOrderId`. Clicking any table in the group loads the joint active order. Clearing or finalizing the bill on one group table clears all other tables in the group simultaneously.
+   - Client sends PUT `/api/tables/:id` with state body (capacity, status, timerStart, currentOrderId, group_id).
+   - Server updates database table row in Supabase PostgreSQL -> returns updated table object -> Client context updates React state -> Floor Plan layout re-renders.
+   - Seating Group Flow: User clicks "Group" seating -> selects nodes visually on interactive floor map. On save, client sends POST `/api/tables/seat-group` with target `tableIds`.
+   - Server creates an empty pending order, generates a `groupId`, updates all selected tables in a transaction block to occupied, and returns status -> client reload state.
    - Custom Table Management: Admins add or delete tables in the Settings panel.
-     - Adding a table validates uniqueness and generates a unique ID, synchronizing it with LocalStorage.
-     - Deleting a table filters it out from the layout state. Deleting occupied tables is strictly blocked to maintain active order integrity.
+     - Adding table calls POST `/api/tables`. Server validates name uniqueness in PostgreSQL, inserts row, and returns the new table object.
+     - Removing table calls DELETE `/api/tables/:id`. Server checks if status is occupied; if so, blocks deletion with 400 Bad Request. Otherwise, deletes table row from database.
 
 2. Order Lifecycle & Billing Flow:
-   - Barista/Waiter selects active table -> opens order panel displaying menu items in a grid layout with a top-level search bar.
-   - Categories can be filtered without active button shadows for a cleaner look.
-   - Each menu card displays an always-visible incremental/decremental quantity selector (quantity starts at 0, decrementing below 1 removes it from active list, minus is disabled at 0). The item name is parsed dynamically, rendering the specific item name in a bold, larger font and modifier parentheticals in a smaller, lighter font. The card headings are bound to a min-height of 38px with flex styling to align all cards uniformly.
-   - Prices, taxes, and total billing are calculated strictly in Indian Rupees (₹). To keep the order-taking panel clean, the panel bottom hides running totals and shows a "Table X order" or "Walk-in order" button. Clicking this button opens an overlay summary card showing the item names, quantities, unit prices, unit totals, and overall billing figures.
-   - Submit Order -> updates table state to 'Occupied' (if not already) -> stores active order in order queue. Walk-in takeaway/counter orders are registered with a mock table state that bypasses seated table occupancy.
-   - Active orders queue lists unpaid orders in collapsible cards segmented by a toggle switcher: "Table Orders" and "Walk-in Orders".
-   - Each card contains an "Add Item" button (renamed from "Update Order") that opens the ordering drawer to add more items. While viewing the collapsible order summary, users can adjust quantities using plus/minus buttons or remove items directly using a trash icon. Decrementing quantity to zero or removing the last item deletes the order and clears the table status. A "Mark Paid" button completes the table checkout, clearing order details and resetting table status to 'Available' (no-op for walk-ins).
+   - Barista/Waiter selects active table -> opens order panel displaying menu items categories.
+   - User increments item quantities. Client calculates running subtotal, tax (based on settings taxRate), and total billing figures.
+   - Submit Order -> Client sends POST `/api/orders` (or PUT `/api/orders/:id` if updating active order) containing items list, totals, and timestamps.
+   - Server updates `orders` database row. If creating a new order on an active table, server updates table status to occupied and associates the order ID.
+   - Collapsible Active Orders Queue reads unpaid orders from GET `/api/orders` (filtering by unpaid status).
+   - Quantity edits in the order panel update order totals via PUT `/api/orders/:id`. If items list becomes empty, client triggers DELETE `/api/orders/:id` to clean database row, and calls POST `/api/tables/:id/clear` to restore available table layout.
+   - Checkout Flow: Clicking "Mark Paid" updates order status to paid via PUT `/api/orders/:id`.
+   - Server updates order status in DB. If status is paid, server automatically queries linked table rows, clearing `current_order_id`, `timer_start`, `group_id`, and setting status to `available` for all related tables.
 
 3. Menu Item Administration Flow:
-   - User views Menu screen -> searches or filters by category (Sandwich, Slice, Pizza, Maggi, Milkshake, Puff, Bhel, French Fries, Burger, Tea/Coffee, Thepla/Paratha, Extra).
-   - User toggles item availability (instantly updates ordering availability) or clicks "Edit" to modify details, including a new "Image URL or Path" field in the MenuModal.
-   - Creating/modifying a menu item saves its image path (mapping to dynamic static files in `/images/` or external links) into the state.
-   - MenuCard reads the image field, rendering the food photo inside a neobrutalist border at the top of the card with an interactive zoom hover effect.
-   - If an item is marked as out-of-stock, a dark semi-transparent overlay and "Out of Stock" badge are applied directly over the food photo.
-   - Global menu state (including image paths) is modified and saved to LocalStorage.
+   - User views Menu screen -> filters by category or searches by name query.
+   - Client fetches items via GET `/api/menu`.
+   - Edit menu item sends PUT `/api/menu/:id` with new price, availability, dietary array, name, and image path.
+   - Add menu item sends POST `/api/menu` which inserts a new row and assigns a unique ID.
+   - Server writes to `menu_items` table in Supabase PostgreSQL and returns updated/created records to synchronize client view.
+   - Delete menu item sends DELETE `/api/menu/:id`.
 
 4. Performance Analytics & Reports Flow:
-   - User selects Reports tab -> reads paid order list from CafeContext state.
-   - Filters and aggregates orders to compute: today's revenue (current day timestamps), month-to-date sales, average order value (AOV, dividing total sales by order counts), and transaction volume. These metrics are displayed using prominent, large typography to ensure they are clearly visible at a single glance.
-   - Computes vertical bar coordinates relative to dynamic Y-axis metrics (computed tick levels representing units sold) and logs them against X-axis item/category labels in a scrollable bar chart wrapper.
-   - Render bars in cycling vibrant Neo-Brutalist colors (Yellow, Green, Pink, Purple, Blue, Orange, Teal, Coral) with height bounds mapping exactly to parent height parameters.
-   - Provides a fullscreen toggle trigger on the chart card that enters browser-level fullscreen and requests screen orientation lock to force landscape display on device screens.
-   - Highlights the top three standby performers and renders a compact "Full Report" button of reduced height providing user-triggered download actions for client-side PDF sales reports.
-   - Provides a PDF generation flow triggered by a PDF icon button in the deep-dive card header. It loops through all menu categories, groups and sorts items within each category, calculates sub-totals for each category, and renders a category-wise bifurcated sales report with alternating row colors, category headers, sub-totals, and a grand total summary row at the bottom, triggering a browser download of the compiled PDF.
+   - User selects Reports tab.
+   - Client calls GET `/api/orders` with query filters: `status=paid` and optional `startDate` / `endDate` timestamps.
+   - Since reporting is optimized, server executes fast queried index scans (`idx_orders_status_timestamp` composite index) on orders table in Supabase PostgreSQL, returning historical transactions quickly.
+   - Client aggregates orders using React `useMemo` to display total revenue, month-to-date sales, transactions volume, and AOV.
+   - Generates sales bar chart coordinates dynamically. If full-screen is requested, enters browser-level fullscreen and requests screen orientation lock.
+   - Generates client-side PDF sales report using jsPDF, grouping items by category, calculating category-wise subtotals, and downloading the compiled PDF database layout.
 
 === ERROR HANDLING STRATEGIES ===
-- LocalStorage Fallback: In-memory store fallback if browser disables localStorage (e.g. private tabs).
-- Schema Verification: Validates stored data format on app startup, falling back to default seed data if corrupted.
-- Form Validation: Ensures item prices are non-negative, tables have positive seating numbers, and orders are non-empty.
+- API Fetch Handlers: Network requests catch errors, log them in the console, and block state updates if responses are invalid.
+- Form / Database Validation: Enforces unique table numbers at database level (unique constraints) and price limits/positive counts at client validation level.
+- Auth Expired Fallback: Express middleware returns 401 for invalid tokens, which alerts client auth state listeners to redirect the user to the Login screen.

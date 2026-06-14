@@ -1,6 +1,7 @@
 import React from 'react';
-import { Coffee, Settings as SettingsIcon } from 'lucide-react';
+import { Coffee, Settings as SettingsIcon, LogOut } from 'lucide-react';
 import { useCafe } from '../context/CafeContext';
+import { supabase } from '../supabaseClient';
 
 interface HeaderProps {
   activeTab: string;
@@ -75,6 +76,18 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
             title="Open App Settings"
           >
             <SettingsIcon size={18} className="stroke-[2.5]" />
+          </button>
+
+          <button
+            onClick={async () => {
+              if (window.confirm("Are you sure you want to log out of Patel's Cafe?")) {
+                await supabase.auth.signOut();
+              }
+            }}
+            className="p-2 rounded-lg border-2 border-black bg-white text-black hover:bg-error-container hover:text-error transition-all cursor-pointer shadow-[2px_2px_0px_0px_#000000] active:translate-x-[1.5px] active:translate-y-[1.5px] active:shadow-none"
+            title="Log Out"
+          >
+            <LogOut size={18} className="stroke-[2.5]" />
           </button>
         </div>
       </div>

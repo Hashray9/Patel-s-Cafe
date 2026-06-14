@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Minus, ShoppingBag, Trash2, Search } from 'lucide-react';
 import { useCafe } from '../context/CafeContext';
@@ -65,11 +65,7 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ tableId, isOpen, onClose
     setCart(prev => prev.filter(i => i.menuItemId !== itemId));
   };
 
-  useEffect(() => {
-    if (cart.length === 0) {
-      setIsSummaryOpen(false);
-    }
-  }, [cart]);
+
 
   const getItemQty = (itemId: string) => {
     return cart.find(c => c.menuItemId === itemId)?.quantity || 0;
@@ -93,7 +89,7 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ tableId, isOpen, onClose
   };
 
   return (
-    <AnimatePresence>
+    <>
       <div key="order-drawer" className="fixed inset-0 z-50 flex justify-end">
         {/* Backdrop */}
         <motion.div
@@ -293,7 +289,7 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ tableId, isOpen, onClose
 
       {/* Order Summary Popup Card */}
       <AnimatePresence key="order-summary-presence">
-        {isSummaryOpen && (
+        {isSummaryOpen && cart.length > 0 && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
             {/* Backdrop */}
             <motion.div
@@ -410,7 +406,7 @@ export const OrderPanel: React.FC<OrderPanelProps> = ({ tableId, isOpen, onClose
           </div>
         )}
       </AnimatePresence>
-    </AnimatePresence>
+    </>
   );
 };
 export default OrderPanel;

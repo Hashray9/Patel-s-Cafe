@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useState } from 'react';
+import { motion } from 'framer-motion';
 import { X, ChevronDown } from 'lucide-react';
 import type { MenuItem } from '../types';
 import { useCafe } from '../context/CafeContext';
@@ -10,41 +10,19 @@ interface MenuModalProps {
   onClose: () => void;
 }
 
-export const MenuModal: React.FC<MenuModalProps> = ({ item, isOpen, onClose }) => {
+export const MenuModal: React.FC<MenuModalProps> = ({ item, onClose }) => {
   const { addMenuItem, updateMenuItem } = useCafe();
 
-  const [name, setName] = useState('');
-  const [price, setPrice] = useState('0.00');
-  const [category, setCategory] = useState<MenuItem['category']>('sandwich');
-  const [isAvailable, setIsAvailable] = useState(true);
-  const [isVegan, setIsVegan] = useState(false);
-  const [isGF, setIsGF] = useState(false);
-  const [image, setImage] = useState('');
+  const [name, setName] = useState(item ? item.name : '');
+  const [price, setPrice] = useState(item ? item.price.toFixed(2) : '');
+  const [category, setCategory] = useState<MenuItem['category']>(item ? item.category : 'sandwich');
+  const [isAvailable, setIsAvailable] = useState(item ? item.isAvailable : true);
+  const isVegan = item ? item.dietary.includes('Vegan') : false;
+  const isGF = item ? item.dietary.includes('GF') : false;
+  const [image, setImage] = useState(item ? item.image || '' : '');
 
   // Custom Dropdown Open State
   const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
-
-  useEffect(() => {
-    if (item) {
-      setName(item.name);
-      setPrice(item.price.toFixed(2));
-      setCategory(item.category);
-      setIsAvailable(item.isAvailable);
-      setIsVegan(item.dietary.includes('Vegan'));
-      setIsGF(item.dietary.includes('GF'));
-      setImage(item.image || '');
-    } else {
-      setName('');
-      setPrice('');
-      setCategory('sandwich');
-      setIsAvailable(true);
-      setIsVegan(false);
-      setIsGF(false);
-      setImage('');
-    }
-  }, [item, isOpen]);
-
-  if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -76,8 +54,7 @@ export const MenuModal: React.FC<MenuModalProps> = ({ item, isOpen, onClose }) =
   };
 
   return (
-    <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
         {/* Backdrop */}
         <motion.div
           initial={{ opacity: 0 }}
@@ -234,6 +211,5 @@ export const MenuModal: React.FC<MenuModalProps> = ({ item, isOpen, onClose }) =
           </form>
         </motion.div>
       </div>
-    </AnimatePresence>
   );
 };

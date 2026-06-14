@@ -6,10 +6,10 @@
 - Lucide React: Icon toolkit for high-quality SVG icons styled with tailwind classes.
 - React Hooks (useState, useEffect, useMemo, useCallback): Functional state management and side effects.
 - Service Workers / PWA: Background worker script enabling offline caching, web app manifest capabilities, and install alerts.
-- HTML5 LocalStorage: Browser-based key-value storage used to persist table configurations, order history, and menu overrides.
+- HTML5 Session & Auth Sync: Subscribing to Supabase authorization status (`supabase.auth.onAuthStateChange`) to trigger secure backend fetches and clean local state upon sign-out.
 - CSS Grid Column Spanning: Grid-based bento-layout mapping where certain rows (outdoor umbrellas) use conditional classes (`col-span-2`) for responsive width sizing.
 - Inline SVGs: Scalable custom SVGs (such as the outdoor umbrella picnic table) loaded dynamically based on components schema.
-- Data Aggregation with useMemo: Real-time calculation of today's revenue, month-to-date sales, top standout items, and historical trends directly from local state order records.
+- Data Aggregation with useMemo: Real-time calculation of today's revenue, month-to-date sales, top standout items, and historical trends directly from state order records.
 - Neo-Brutalist Styling on Dynamic Data: Custom horizontal bar chart created using styled responsive divs with variable percentage width bindings (`style={{ width: '${pct}%' }}`) to keep aesthetics consistent with the application theme. Consistent styling principles are applied across views, including shadow-free active button states for category filters.
 - Lazy-Loaded Images: Optimizing initial page load and performance by natively lazy-loading menu card food photography (`loading="lazy"`).
 - Dynamic Image Asset Mapping & Neo-Brutalist Fallbacks: Categories mapped to generated high-quality food photography files (`public/images/`) with customized fallback placeholders showing category abbreviations when no image URL is provided.
@@ -17,4 +17,15 @@
 - Nested Modal Overlays: Managing multiple concurrent overlay layers (e.g., order summary popup card over the sliding order drawer panel) using z-index ordering and independent Framer Motion animations to prevent backdrop collision.
 - Dynamic Seating, Table Linking, and Group Seating Lifecycle Management: State modification handlers (addTable, removeTable, seatGroup) integrated into React Context to support custom physical store expansions/removals, table-linking for joint seating groups with consolidated order syncing, form validation, and collision guards (blocking deletion of occupied seating).
 - Interactive Floor-Plan Map Node Selector: A spatial node selection interface built using CSS grids that represents restaurant table layouts inside dialog views. Nodes are dynamically color-coded based on occupancy and selection states, enabling waiters to link tables visually rather than by plain text lists.
+- Key-Based Lifecycle and State Resetting: Using React `key` props on overlay components (like TableModal and MenuModal) to control when components remount, cleaning up local state variables natively on open/close operations without relying on complex and performance-intensive useEffect synchronization.
+- React 19 Stable Event Callbacks: Wrapping context functions in `useCallback` to ensure reference stability across renders, avoiding purity warnings and preventing cascading rendering cycles.
+- Reactive Derived UI State: Eliminating state-syncing effects (like mapping active orders to table states or syncing the selected report month in useEffect) in favor of inline selector functions and active variable derivations (`selectedMonth || monthsList[0]`), minimizing render cascades.
 
+=== BACKEND & DATABASE ===
+- Node.js & Express: A backend API server exposing RESTful endpoints for CRUD settings, menu management, seating states, and analytical orders.
+- Supabase PostgreSQL Database: Relational database storing persistent settings, tables, menu, and orders.
+- JWT Security Verification Middleware: Express middleware verifying the `Authorization: Bearer <JWT>` header via Supabase auth API validation to secure resources against unauthenticated access.
+- Row-Level Bypass (Service Role Client): Initializing the backend client with Supabase service role secret keys to execute database reads/writes securely in a server-side environment.
+- Composite SQL Indexing: Speeding up analytical reports generation by placing compound B-Tree indexes on orders (`status`, `timestamp`) and indexes on menu categories to avoid full table scans.
+- Database Casings & Formatting: Mapping PostgreSQL snake_case database schema fields to standard camelCase frontend structures within controllers.
+- Automatic Transaction Cascading: Handling table state clears and seating groups at the controller layer when order status changes to paid, keeping states completely synchronized.

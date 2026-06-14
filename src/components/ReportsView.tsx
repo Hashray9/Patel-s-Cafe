@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { TrendingUp, Calendar, Award, Activity, ChevronDown, FileText } from 'lucide-react';
 import { useCafe } from '../context/CafeContext';
 import { jsPDF } from 'jspdf';
@@ -22,11 +22,7 @@ export const ReportsView: React.FC = () => {
   // Selected Month State
   const [selectedMonth, setSelectedMonth] = useState<string>('');
 
-  useEffect(() => {
-    if (monthsList.length > 0 && !selectedMonth) {
-      setSelectedMonth(monthsList[0]);
-    }
-  }, [monthsList, selectedMonth]);
+  const activeMonth = selectedMonth || monthsList[0] || '';
 
   const formatMonthLabel = (monthKey: string) => {
     if (!monthKey) return '';
@@ -48,20 +44,20 @@ export const ReportsView: React.FC = () => {
 
   // Month Stats (Sales count and Revenue)
   const monthStats = useMemo(() => {
-    if (!selectedMonth) return { revenue: 0, count: 0, list: [] };
+    if (!activeMonth) return { revenue: 0, count: 0, list: [] };
     const monthOrders = orders.filter(o => {
       if (o.status !== 'paid') return false;
       const d = new Date(o.timestamp);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      return key === selectedMonth;
+      return key === activeMonth;
     });
     const rev = monthOrders.reduce((acc, curr) => acc + curr.total, 0);
     return { revenue: rev, count: monthOrders.length, list: monthOrders };
-  }, [orders, selectedMonth]);
+  }, [orders, activeMonth]);
 
   // All Items performance inside the selected month
   const itemPerformance = useMemo(() => {
-    if (!selectedMonth) return [];
+    if (!activeMonth) return [];
 
     const salesMap: { [id: string]: { name: string; price: number; category: string; qty: number; revenue: number } } = {};
 
@@ -90,7 +86,7 @@ export const ReportsView: React.FC = () => {
     return Object.keys(salesMap)
       .map(id => ({ id, ...salesMap[id] }))
       .sort((a, b) => b.qty - a.qty);
-  }, [menu, monthStats, selectedMonth]);
+  }, [menu, monthStats, activeMonth]);
 
   // Top 3 Items of the selected month
   const topThree = useMemo(() => {
@@ -348,7 +344,7 @@ export const ReportsView: React.FC = () => {
               onClick={() => setIsMonthDropdownOpen(!isMonthDropdownOpen)}
               className="neo-brutal-input py-1.5 pr-8 pl-3 font-bold text-[13.5px] bg-white text-black shadow-[2px_2px_0px_0px_#000000] border-2 border-black rounded-lg capitalize cursor-pointer flex items-center justify-between min-w-[155px] relative select-none hover:bg-surface-container-low transition-colors active:translate-x-[0.5px] active:translate-y-[0.5px] active:shadow-none"
             >
-              <span>{formatMonthLabel(selectedMonth) || 'Select Month'}</span>
+              <span>{formatMonthLabel(activeMonth) || 'Select Month'}</span>
               <ChevronDown size={14} className={`absolute right-3 top-1/2 -translate-y-1/2 transition-transform duration-200 stroke-[2.5] ${isMonthDropdownOpen ? 'rotate-180' : ''}`} />
             </button>
 
@@ -367,7 +363,7 @@ export const ReportsView: React.FC = () => {
                         setSelectedMonth(month);
                         setIsMonthDropdownOpen(false);
                       }}
-                      className={`w-full px-3.5 py-2 font-bold text-[13px] text-left text-black hover:bg-surface-container-high transition-colors capitalize border-b last:border-b-0 border-on-surface/10 ${selectedMonth === month ? 'bg-primary-container' : 'bg-white'
+                      className={`w-full px-3.5 py-2 font-bold text-[13px] text-left text-black hover:bg-surface-container-high transition-colors capitalize border-b last:border-b-0 border-on-surface/10 ${activeMonth === month ? 'bg-primary-container' : 'bg-white'
                         }`}
                     >
                       {formatMonthLabel(month)}
