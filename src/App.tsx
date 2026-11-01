@@ -564,20 +564,31 @@ import { useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import type { Session } from '@supabase/supabase-js';
 import { Login } from './components/Login';
+import { ResetPassword } from './components/ResetPassword';
 
 export const App: React.FC = () => {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isPasswordReset, setIsPasswordReset] = useState(false);
 
   useEffect(() => {
+    // Detect Supabase password-reset flow from URL hash
+    const hash = window.location.hash;
+    if (hash.includes('type=recovery')) {
+      setIsPasswordReset(true);
+    }
+
     // Check current session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setLoading(false);
     });
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    // Listen for auth changes — PASSWORD_RECOVERY event also fires here
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsPasswordReset(true);
+      }
       setSession(session);
       setLoading(false);
     });
@@ -594,6 +605,11 @@ export const App: React.FC = () => {
         </div>
       </div>
     );
+  }
+
+  // Show password reset UI when user arrives via the email link
+  if (isPasswordReset && session) {
+    return <ResetPassword />;
   }
 
   if (!session) {
