@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChefHat, CheckCircle, Clock, LogOut, RefreshCw, Flame, User } from 'lucide-react';
+import { ChefHat, CheckCircle, Clock, LogOut, RefreshCw, Flame, User, Volume2, VolumeX, BellRing } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import type { Order, MenuItem, Settings } from '../types';
@@ -23,6 +23,154 @@ export const CookDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const [justChimed, setJustChimed] = useState(false);
+
+  const soundEnabledRef = useRef(soundEnabled);
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+  }, [soundEnabled]);
+
+  const audioCtxRef = useRef<AudioContext | null>(null);
+
+  // Initialize and unlock audio context (required for mobile iOS Safari & Android Chrome)
+  const initOrResumeAudio = useCallback(() => {
+    try {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return null;
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new AudioCtx();
+      }
+      if (audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume();
+      }
+      // Play a 1-sample silent buffer to unlock iOS Safari Web Audio
+      const buffer = audioCtxRef.current.createBuffer(1, 1, 22050);
+      const source = audioCtxRef.current.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioCtxRef.current.destination);
+      source.start(0);
+
+      setAudioUnlocked(true);
+      return audioCtxRef.current;
+    } catch (err) {
+      console.warn('Audio unlock error:', err);
+      return null;
+    }
+  }, []);
+
+  // Unlock audio on first user touch / click anywhere on screen
+  useEffect(() => {
+    const handleFirstInteraction = () => {
+      initOrResumeAudio();
+    };
+    window.addEventListener('click', handleFirstInteraction, { passive: true });
+    window.addEventListener('touchstart', handleFirstInteraction, { passive: true });
+    return () => {
+      window.removeEventListener('click', handleFirstInteraction);
+      window.removeEventListener('touchstart', handleFirstInteraction);
+    };
+  }, [initOrResumeAudio]);
+
+  // Screen Wake Lock API to prevent mobile phone display from sleeping while Cook Kitchen is active
+  useEffect(() => {
+    let wakeLock: any = null;
+    const requestWakeLock = async () => {
+      if (typeof navigator !== 'undefined' && 'wakeLock' in navigator && (navigator as any).wakeLock?.request) {
+        try {
+          wakeLock = await (navigator as any).wakeLock.request('screen');
+        } catch {
+          // Ignore wake lock failure (e.g. low battery mode)
+        }
+      }
+    };
+
+    requestWakeLock();
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (wakeLock) {
+        wakeLock.release().catch(() => {});
+      }
+    };
+  }, []);
+
+  // Synthesized kitchen bell chime & mobile vibration alert
+  const playOrderChime = useCallback((force = false) => {
+    if (!soundEnabledRef.current && !force) return;
+
+    try {
+      let ctx = audioCtxRef.current;
+      if (!ctx) {
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        if (AudioCtx) {
+          audioCtxRef.current = new AudioCtx();
+          ctx = audioCtxRef.current;
+        }
+      }
+      if (!ctx) return;
+
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+
+      const now = ctx.currentTime;
+
+      // Triple kitchen ticket bell chime (E5 -> A5 -> D6)
+      const chimeNotes = [
+        { freq: 659.25, start: 0, dur: 0.35, gain: 0.5 },     // E5
+        { freq: 880.00, start: 0.16, dur: 0.45, gain: 0.55 },  // A5
+        { freq: 1174.66, start: 0.35, dur: 0.75, gain: 0.6 }   // D6
+      ];
+
+      chimeNotes.forEach(({ freq, start, dur, gain: peakGain }) => {
+        const osc = ctx!.createOscillator();
+        const gainNode = ctx!.createGain();
+
+        // Triangle wave gives warm bell-like harmonic richness
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, now + start);
+
+        gainNode.gain.setValueAtTime(0, now + start);
+        gainNode.gain.linearRampToValueAtTime(peakGain, now + start + 0.015);
+        gainNode.gain.exponentialRampToValueAtTime(0.0001, now + start + dur);
+
+        osc.connect(gainNode);
+        gainNode.connect(ctx!.destination);
+
+        osc.start(now + start);
+        osc.stop(now + start + dur);
+      });
+
+      // Mobile haptic vibration if supported (pattern: vibrate, pause, vibrate)
+      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        try {
+          navigator.vibrate([250, 100, 250, 100, 400]);
+        } catch {
+          // ignore vibration errors
+        }
+      }
+
+      // Visual flash trigger
+      setJustChimed(true);
+      setTimeout(() => setJustChimed(false), 2000);
+    } catch (err) {
+      console.warn('Audio chime playback error:', err);
+    }
+  }, []);
+
+  const playOrderChimeRef = useRef(playOrderChime);
+  useEffect(() => {
+    playOrderChimeRef.current = playOrderChime;
+  }, [playOrderChime]);
 
   const loadData = useCallback(async () => {
     try {
@@ -47,15 +195,32 @@ export const CookDashboard: React.FC = () => {
     loadData();
   }, [loadData]);
 
-  // Real-time subscription: listen for order changes
+  // Real-time subscription: listen for order changes & trigger chime on incoming order
   useEffect(() => {
     const channel = supabase
       .channel('cook-orders-realtime')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'orders' },
-        () => {
-          // Reload all orders when any order changes
+        (payload: any) => {
+          // If a new order is punched (INSERT)
+          if (payload.eventType === 'INSERT') {
+            const newRecord = payload.new;
+            if (!cafeId || !newRecord?.cafe_id || newRecord.cafe_id === cafeId) {
+              playOrderChimeRef.current();
+            }
+          } else if (payload.eventType === 'UPDATE') {
+            const newRecord = payload.new;
+            const oldRecord = payload.old;
+            const isCafeMatch = !cafeId || !newRecord?.cafe_id || newRecord.cafe_id === cafeId;
+            const becameActive = (newRecord?.status === 'pending' || newRecord?.status === 'preparing') &&
+                                 (oldRecord?.status !== 'pending' && oldRecord?.status !== 'preparing');
+            const itemsChanged = JSON.stringify(newRecord?.items) !== JSON.stringify(oldRecord?.items);
+            if (isCafeMatch && (becameActive || (newRecord?.status !== 'ready' && newRecord?.status !== 'paid' && itemsChanged))) {
+              playOrderChimeRef.current();
+            }
+          }
+          // Reload orders to keep kitchen board live
           loadData();
         }
       )
@@ -64,7 +229,7 @@ export const CookDashboard: React.FC = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [loadData]);
+  }, [loadData, cafeId]);
 
   const handleMarkReady = async (orderId: string) => {
     setUpdatingOrderId(orderId);
@@ -141,12 +306,33 @@ export const CookDashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 md:gap-3">
           {/* Logged in indicator */}
           <div className="hidden sm:flex items-center gap-1.5 text-white/60 text-[12px] font-semibold">
             <User size={13} className="stroke-[2]" />
             {userEmail}
           </div>
+
+          {/* Sound Alert Toggle & Test Button */}
+          <button
+            onClick={() => {
+              const next = !soundEnabled;
+              setSoundEnabled(next);
+              if (next) {
+                initOrResumeAudio();
+                playOrderChime(true);
+              }
+            }}
+            className={`px-2.5 py-1.5 rounded-lg border-2 font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+              soundEnabled
+                ? 'bg-[#b2f0cf] text-[#006e3a] border-black shadow-[2px_2px_0px_0px_#000000]'
+                : 'bg-white/10 text-white/60 border-white/30 hover:bg-white/20'
+            }`}
+            title={soundEnabled ? 'Kitchen sound alert is ON (Tap to test chime)' : 'Kitchen sound alert is MUTED (Tap to turn on)'}
+          >
+            {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+            <span className="hidden xs:inline">{soundEnabled ? 'Sound ON' : 'Muted'}</span>
+          </button>
 
           {/* Refresh */}
           <button
@@ -169,7 +355,39 @@ export const CookDashboard: React.FC = () => {
       </header>
 
       {/* Main Kitchen Display */}
-      <main className="max-w-7xl mx-auto px-4 md:px-8 py-6 space-y-8">
+      <main className="max-w-7xl mx-auto px-4 md:px-8 py-6 space-y-6">
+
+        {/* Audio unlock callout for mobile browsers (shown until first user touch/tap) */}
+        {!audioUnlocked && (
+          <div
+            onClick={() => {
+              initOrResumeAudio();
+              playOrderChime(true);
+            }}
+            className="bg-[#ffd982] text-black border-2 border-black p-3.5 rounded-xl flex items-center justify-between cursor-pointer shadow-[3px_3px_0px_0px_#000000] hover:translate-y-[-1px] transition-all select-none"
+          >
+            <div className="flex items-center gap-3">
+              <div className="bg-black text-[#ffd982] p-2 rounded-lg border border-black">
+                <BellRing size={20} className="animate-bounce" />
+              </div>
+              <div>
+                <p className="font-bold text-sm">🔔 Tap here to test & enable Kitchen Sound</p>
+                <p className="text-xs text-black/75">Mobile phones require 1 tap to allow loud order alerts</p>
+              </div>
+            </div>
+            <button className="bg-black text-white text-xs font-bold px-3.5 py-1.5 rounded-lg border border-black hover:bg-black/90 shrink-0 ml-2">
+              Test Sound 🔊
+            </button>
+          </div>
+        )}
+
+        {/* Visual Notification Banner when new order chimes */}
+        {justChimed && (
+          <div className="bg-[#b2f0cf] text-[#006e3a] border-2 border-black p-3 rounded-xl flex items-center gap-2.5 font-bold text-sm shadow-[3px_3px_0px_0px_#000000] animate-pulse select-none">
+            <BellRing size={18} className="stroke-[2.5]" />
+            <span>🔔 New order received! Kitchen alerted.</span>
+          </div>
+        )}
 
         {/* Active Orders Section */}
         <section>
@@ -360,4 +578,3 @@ export const CookDashboard: React.FC = () => {
     </div>
   );
 };
-
