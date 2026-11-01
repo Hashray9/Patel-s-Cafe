@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 const app = new Hono();
 
 // ==========================================
-// CORS — allow all origins (restrict in production if needed)
+// CORS — allow all origins
 // ==========================================
 app.use('*', cors());
 
@@ -15,8 +15,10 @@ app.use('*', cors());
 const getSupabase = (env) =>
   createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
 
+const DEFAULT_CAFE_ID = 'patel-cafe-main';
+
 // ==========================================
-// Auth Middleware — verifies Supabase JWT on every protected route
+// Auth Middleware — verifies Supabase JWT and loads role & cafe_id
 // ==========================================
 const authenticateToken = async (c, next) => {
   const authHeader = c.req.header('Authorization');
@@ -32,7 +34,31 @@ const authenticateToken = async (c, next) => {
     return c.json({ error: 'Invalid or expired auth session' }, 401);
   }
 
+  let role = 'counter';
+  let cafeId = DEFAULT_CAFE_ID;
+
+  try {
+    const { data: roleRow } = await supabase
+      .from('user_roles')
+      .select('role, cafe_id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (roleRow) {
+      if (roleRow.role) role = roleRow.role;
+      if (roleRow.cafe_id) cafeId = roleRow.cafe_id;
+    } else {
+      if (user.user_metadata?.role) role = user.user_metadata.role;
+      if (user.user_metadata?.cafe_id) cafeId = user.user_metadata.cafe_id;
+      if (user.email?.toLowerCase().includes('cook')) role = 'cook';
+    }
+  } catch (err) {
+    console.error('Error fetching user role:', err);
+  }
+
   c.set('user', user);
+  c.set('role', role);
+  c.set('cafe_id', cafeId);
   await next();
 };
 
@@ -44,15 +70,102 @@ app.get('/', (c) => {
 });
 
 // ==========================================
+// 👤 User Role & Account Endpoints
+// ==========================================
+app.get('/api/me', authenticateToken, async (c) => {
+  const user = c.get('user');
+  const role = c.get('role');
+  const cafeId = c.get('cafe_id');
+
+  return c.json({
+    id: user.id,
+    email: user.email,
+    role,
+    cafeId,
+  });
+});
+
+app.post('/api/user-role', authenticateToken, async (c) => {
+  const supabase = getSupabase(c.env);
+  const user = c.get('user');
+  const cafeId = c.get('cafe_id');
+  const { role } = await c.req.json();
+
+  if (role !== 'counter' && role !== 'cook') {
+    return c.json({ error: 'Invalid role' }, 400);
+  }
+
+  const { data, error } = await supabase
+    .from('user_roles')
+    .upsert({ user_id: user.id, role, cafe_id: cafeId }, { onConflict: 'user_id' })
+    .select()
+    .single();
+
+  if (error) return c.json({ error: error.message }, 500);
+
+  return c.json({ success: true, role: data.role, cafeId: data.cafe_id });
+});
+
+// ==========================================
+// ✉️ Invite Cook Endpoint
+// ==========================================
+app.post('/api/invite-cook', authenticateToken, async (c) => {
+  const supabase = getSupabase(c.env);
+  const cafeId = c.get('cafe_id');
+  const { email } = await c.req.json();
+
+  if (!email || !email.includes('@')) {
+    return c.json({ error: 'A valid email address is required.' }, 400);
+  }
+
+  const origin = c.req.header('Origin') || 'https://patel-cafe.vercel.app';
+  const redirectTo = `${origin}/`;
+
+  try {
+    const { data, error } = await supabase.auth.admin.inviteUserByEmail(email.trim().toLowerCase(), {
+      data: {
+        role: 'cook',
+        cafe_id: cafeId,
+      },
+      redirectTo,
+    });
+
+    if (error) {
+      return c.json({ error: error.message }, 400);
+    }
+
+    if (data?.user) {
+      await supabase
+        .from('user_roles')
+        .upsert({
+          user_id: data.user.id,
+          role: 'cook',
+          cafe_id: cafeId,
+        }, { onConflict: 'user_id' });
+    }
+
+    return c.json({
+      success: true,
+      message: `Invitation successfully sent to ${email}.`,
+      user: data?.user,
+    });
+  } catch (err) {
+    return c.json({ error: err.message || 'Failed to send invite' }, 500);
+  }
+});
+
+// ==========================================
 // ⚙️ Settings Endpoints
 // ==========================================
 
 app.get('/api/settings', authenticateToken, async (c) => {
   const supabase = getSupabase(c.env);
+  const cafeId = c.get('cafe_id');
+
   const { data, error } = await supabase
     .from('settings')
     .select('*')
-    .eq('id', 1)
+    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`)
     .maybeSingle();
 
   if (error) return c.json({ error: error.message }, 500);
@@ -70,11 +183,12 @@ app.get('/api/settings', authenticateToken, async (c) => {
 
 app.put('/api/settings', authenticateToken, async (c) => {
   const supabase = getSupabase(c.env);
+  const cafeId = c.get('cafe_id');
   const { storeName, taxRate, currency } = await c.req.json();
 
   const { data, error } = await supabase
     .from('settings')
-    .upsert({ id: 1, store_name: storeName, tax_rate: taxRate, currency })
+    .upsert({ id: 1, store_name: storeName, tax_rate: taxRate, currency, cafe_id: cafeId })
     .select()
     .single();
 
@@ -87,15 +201,64 @@ app.put('/api/settings', authenticateToken, async (c) => {
   });
 });
 
+// Clear / Reset Endpoints for Settings
+app.post('/api/settings/clear-tables', authenticateToken, async (c) => {
+  const supabase = getSupabase(c.env);
+  const cafeId = c.get('cafe_id');
+
+  const { error } = await supabase
+    .from('tables')
+    .delete()
+    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`);
+
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json({ success: true, message: 'All tables cleared.' });
+});
+
+app.post('/api/settings/clear-menu', authenticateToken, async (c) => {
+  const supabase = getSupabase(c.env);
+  const cafeId = c.get('cafe_id');
+
+  const { error } = await supabase
+    .from('menu_items')
+    .delete()
+    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`);
+
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json({ success: true, message: 'All menu items cleared.' });
+});
+
+app.post('/api/settings/clear-orders', authenticateToken, async (c) => {
+  const supabase = getSupabase(c.env);
+  const cafeId = c.get('cafe_id');
+
+  const { error } = await supabase
+    .from('orders')
+    .delete()
+    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`);
+
+  if (error) return c.json({ error: error.message }, 500);
+
+  await supabase
+    .from('tables')
+    .update({ status: 'available', current_order_id: null, timer_start: null, group_id: null })
+    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`);
+
+  return c.json({ success: true, message: 'All orders cleared.' });
+});
+
 // ==========================================
 // 🪑 Tables Endpoints
 // ==========================================
 
 app.get('/api/tables', authenticateToken, async (c) => {
   const supabase = getSupabase(c.env);
+  const cafeId = c.get('cafe_id');
+
   const { data, error } = await supabase
     .from('tables')
     .select('*')
+    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`)
     .order('number', { ascending: true });
 
   if (error) return c.json({ error: error.message }, 500);
@@ -114,12 +277,14 @@ app.get('/api/tables', authenticateToken, async (c) => {
 
 app.post('/api/tables', authenticateToken, async (c) => {
   const supabase = getSupabase(c.env);
+  const cafeId = c.get('cafe_id');
   const { number, capacity, isOutdoor } = await c.req.json();
 
   const { data: existing } = await supabase
     .from('tables')
     .select('id')
     .eq('number', number)
+    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`)
     .maybeSingle();
 
   if (existing) {
@@ -129,7 +294,14 @@ app.post('/api/tables', authenticateToken, async (c) => {
   const tableId = `t-${Date.now()}`;
   const { data, error } = await supabase
     .from('tables')
-    .insert({ id: tableId, number, capacity, is_outdoor: isOutdoor || false, status: 'available' })
+    .insert({
+      id: tableId,
+      number,
+      capacity,
+      is_outdoor: isOutdoor || false,
+      status: 'available',
+      cafe_id: cafeId,
+    })
     .select()
     .single();
 
@@ -144,9 +316,10 @@ app.post('/api/tables', authenticateToken, async (c) => {
   }, 201);
 });
 
-// Group seating — must come BEFORE /:id routes to avoid route conflict
+// Group seating
 app.post('/api/tables/seat-group', authenticateToken, async (c) => {
   const supabase = getSupabase(c.env);
+  const cafeId = c.get('cafe_id');
   const { tableIds } = await c.req.json();
 
   if (!tableIds || !Array.isArray(tableIds) || tableIds.length === 0) {
@@ -156,7 +329,8 @@ app.post('/api/tables/seat-group', authenticateToken, async (c) => {
   const { data: tablesData, error: fetchErr } = await supabase
     .from('tables')
     .select('number')
-    .in('id', tableIds);
+    .in('id', tableIds)
+    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`);
 
   if (fetchErr) return c.json({ error: fetchErr.message }, 500);
 
@@ -178,6 +352,7 @@ app.post('/api/tables/seat-group', authenticateToken, async (c) => {
       subtotal: 0,
       tax: 0,
       total: 0,
+      cafe_id: cafeId,
     });
 
   if (orderErr) return c.json({ error: orderErr.message }, 500);
@@ -282,9 +457,12 @@ app.delete('/api/tables/:id', authenticateToken, async (c) => {
 
 app.get('/api/menu', authenticateToken, async (c) => {
   const supabase = getSupabase(c.env);
+  const cafeId = c.get('cafe_id');
+
   const { data, error } = await supabase
     .from('menu_items')
     .select('*')
+    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`)
     .order('category', { ascending: true })
     .order('name', { ascending: true });
 
@@ -303,12 +481,22 @@ app.get('/api/menu', authenticateToken, async (c) => {
 
 app.post('/api/menu', authenticateToken, async (c) => {
   const supabase = getSupabase(c.env);
+  const cafeId = c.get('cafe_id');
   const { name, price, category, isAvailable, dietary, image } = await c.req.json();
 
   const id = `m-${Date.now()}`;
   const { data, error } = await supabase
     .from('menu_items')
-    .insert({ id, name, price, category, is_available: isAvailable !== undefined ? isAvailable : true, dietary: dietary || [], image: image || null })
+    .insert({
+      id,
+      name,
+      price,
+      category,
+      is_available: isAvailable !== undefined ? isAvailable : true,
+      dietary: dietary || [],
+      image: image || null,
+      cafe_id: cafeId,
+    })
     .select()
     .single();
 
@@ -366,9 +554,10 @@ app.delete('/api/menu/:id', authenticateToken, async (c) => {
 
 app.get('/api/orders', authenticateToken, async (c) => {
   const supabase = getSupabase(c.env);
+  const cafeId = c.get('cafe_id');
   const { status, startDate, endDate } = c.req.query();
 
-  let query = supabase.from('orders').select('*');
+  let query = supabase.from('orders').select('*').or(`cafe_id.eq.${cafeId},cafe_id.is.null`);
   if (status) query = query.eq('status', status);
   if (startDate) query = query.gte('timestamp', Number(startDate));
   if (endDate) query = query.lte('timestamp', Number(endDate));
@@ -391,6 +580,7 @@ app.get('/api/orders', authenticateToken, async (c) => {
 
 app.post('/api/orders', authenticateToken, async (c) => {
   const supabase = getSupabase(c.env);
+  const cafeId = c.get('cafe_id');
   const { id, tableId, tableNumber, items, status, timestamp, subtotal, tax, total } = await c.req.json();
 
   const orderId = id || `ord-${Date.now()}`;
@@ -408,6 +598,7 @@ app.post('/api/orders', authenticateToken, async (c) => {
       subtotal: subtotal || 0,
       tax: tax || 0,
       total: total || 0,
+      cafe_id: cafeId,
     })
     .select()
     .single();

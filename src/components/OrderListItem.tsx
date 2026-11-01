@@ -46,22 +46,35 @@ export const OrderListItem: React.FC<OrderListItemProps> = ({ order, onOpenOrder
   return (
     <motion.div
       layout
-      className="bg-surface border-2 border-on-surface rounded-xl overflow-hidden shadow-[4px_4px_0px_0px_rgba(30,27,21,1)] flex flex-col"
+      className={`border-3 border-on-surface rounded-xl overflow-hidden shadow-[4px_4px_0px_0px_rgba(30,27,21,1)] flex flex-col transition-colors ${
+        order.status === 'ready' ? 'bg-[#f4fcf6] ring-2 ring-[#006e3a]' : 'bg-surface'
+      }`}
     >
       {/* Primary header bar */}
       <div 
         onClick={() => setIsOpen(!isOpen)}
-        className="p-4 flex items-center justify-between min-h-[64px] cursor-pointer hover:bg-surface-container-low select-none transition-colors border-b-2 border-on-surface"
+        className={`p-4 flex items-center justify-between min-h-[64px] cursor-pointer hover:bg-surface-container-low select-none transition-colors border-b-2 border-on-surface ${
+          order.status === 'ready' ? 'bg-[#b2f0cf]/40' : ''
+        }`}
       >
         <div className="flex items-center gap-4 flex-1 min-w-0">
           <div className="bg-inverse-surface text-inverse-on-surface px-3 py-1.5 rounded-lg border-2 border-on-surface font-headline-md text-[16px] tracking-tight">
             {order.tableNumber}
           </div>
 
-          <div className="min-w-0">
-            <h4 className="font-label-bold text-[14px] text-on-surface flex items-center gap-2">
+          <div className="min-w-0 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+            <h4 className="font-label-bold text-[14px] text-on-surface">
               Order #{order.id.substring(4, 9)}
             </h4>
+            {order.status === 'ready' ? (
+              <span className="bg-[#006e3a] text-white px-2 py-0.5 rounded-md text-[11px] font-extrabold uppercase border border-black inline-flex items-center gap-1 shadow-[1px_1px_0px_0px_#000000] animate-pulse w-fit">
+                🔔 Food Ready
+              </span>
+            ) : (
+              <span className="bg-[#fff0c2] text-[#7a4e00] px-2 py-0.5 rounded-md text-[11px] font-bold border border-black/30 inline-flex items-center gap-1 w-fit">
+                ⏳ Cooking
+              </span>
+            )}
           </div>
         </div>
 

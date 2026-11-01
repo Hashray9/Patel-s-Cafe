@@ -36,7 +36,32 @@ const authenticateToken = async (req, res, next) => {
     if (error || !user) {
       return res.status(401).json({ error: 'Invalid or expired auth session' });
     }
+
+    let role = 'counter';
+    let cafeId = 'patel-cafe-main';
+
+    try {
+      const { data: roleRow } = await supabase
+        .from('user_roles')
+        .select('role, cafe_id')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (roleRow) {
+        if (roleRow.role) role = roleRow.role;
+        if (roleRow.cafe_id) cafeId = roleRow.cafe_id;
+      } else {
+        if (user.user_metadata?.role) role = user.user_metadata.role;
+        if (user.user_metadata?.cafe_id) cafeId = user.user_metadata.cafe_id;
+        if (user.email?.toLowerCase().includes('cook')) role = 'cook';
+      }
+    } catch (err) {
+      console.error('Error fetching role in express:', err);
+    }
+
     req.user = user;
+    req.role = role;
+    req.cafeId = cafeId;
     next();
   } catch (err) {
     console.error('Authentication error:', err);
@@ -52,6 +77,114 @@ const asyncHandler = (fn) => (req, res, next) => {
 app.get('/', (req, res) => {
   res.json({ status: 'online', message: "Patel's Cafe API Server is running!" });
 });
+
+// ==========================================
+// 👤 User Role Endpoints
+// ==========================================
+
+app.get('/api/me', authenticateToken, asyncHandler(async (req, res) => {
+  res.json({
+    id: req.user.id,
+    email: req.user.email,
+    role: req.role,
+    cafeId: req.cafeId,
+  });
+}));
+
+app.post('/api/user-role', authenticateToken, asyncHandler(async (req, res) => {
+  const { role } = req.body;
+  if (role !== 'counter' && role !== 'cook') {
+    return res.status(400).json({ error: 'Invalid role' });
+  }
+
+  const { data, error } = await supabase
+    .from('user_roles')
+    .upsert({ user_id: req.user.id, role, cafe_id: req.cafeId }, { onConflict: 'user_id' })
+    .select()
+    .single();
+
+  if (error) throw error;
+
+  res.json({ success: true, role: data.role, cafeId: data.cafe_id });
+}));
+
+// ==========================================
+// ✉️ Invite Cook Endpoint
+// ==========================================
+app.post('/api/invite-cook', authenticateToken, asyncHandler(async (req, res) => {
+  const { email } = req.body;
+  if (!email || !email.includes('@')) {
+    return res.status(400).json({ error: 'A valid email address is required.' });
+  }
+
+  const origin = req.headers.origin || 'https://patel-cafe.vercel.app';
+  const redirectTo = `${origin}/`;
+
+  const { data, error } = await supabase.auth.admin.inviteUserByEmail(email.trim().toLowerCase(), {
+    data: {
+      role: 'cook',
+      cafe_id: req.cafeId,
+    },
+    redirectTo,
+  });
+
+  if (error) {
+    return res.status(400).json({ error: error.message });
+  }
+
+  if (data?.user) {
+    await supabase
+      .from('user_roles')
+      .upsert({
+        user_id: data.user.id,
+        role: 'cook',
+        cafe_id: req.cafeId,
+      }, { onConflict: 'user_id' });
+  }
+
+  res.json({
+    success: true,
+    message: `Invitation successfully sent to ${email}.`,
+    user: data?.user,
+  });
+}));
+
+// Clear / Reset Endpoints for Settings
+app.post('/api/settings/clear-tables', authenticateToken, asyncHandler(async (req, res) => {
+  const { error } = await supabase
+    .from('tables')
+    .delete()
+    .or(`cafe_id.eq.${req.cafeId},cafe_id.is.null`);
+
+  if (error) throw error;
+  res.json({ success: true, message: 'All tables cleared.' });
+}));
+
+app.post('/api/settings/clear-menu', authenticateToken, asyncHandler(async (req, res) => {
+  const { error } = await supabase
+    .from('menu_items')
+    .delete()
+    .or(`cafe_id.eq.${req.cafeId},cafe_id.is.null`);
+
+  if (error) throw error;
+  res.json({ success: true, message: 'All menu items cleared.' });
+}));
+
+app.post('/api/settings/clear-orders', authenticateToken, asyncHandler(async (req, res) => {
+  const { error } = await supabase
+    .from('orders')
+    .delete()
+    .or(`cafe_id.eq.${req.cafeId},cafe_id.is.null`);
+
+  if (error) throw error;
+
+  await supabase
+    .from('tables')
+    .update({ status: 'available', current_order_id: null, timer_start: null, group_id: null })
+    .or(`cafe_id.eq.${req.cafeId},cafe_id.is.null`);
+
+  res.json({ success: true, message: 'All orders cleared.' });
+}));
 
 // ==========================================
 // ⚙️ Settings Endpoints

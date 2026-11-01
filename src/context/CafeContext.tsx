@@ -93,7 +93,21 @@ export const CafeProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
 
-    return () => subscription.unsubscribe();
+    // Real-time synchronization for orders & tables across team devices
+    const channel = supabase
+      .channel('counter-live-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        loadData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tables' }, () => {
+        loadData();
+      })
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+      supabase.removeChannel(channel);
+    };
   }, [loadData]);
 
   const clearTable = useCallback(async (tableId: string) => {

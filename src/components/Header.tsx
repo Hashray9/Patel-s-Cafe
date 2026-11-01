@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Coffee, Settings as SettingsIcon, LogOut } from 'lucide-react';
+import { Coffee, Settings as SettingsIcon, LogOut, BellRing } from 'lucide-react';
 import { useCafe } from '../context/CafeContext';
-import { supabase } from '../supabaseClient';
+import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface HeaderProps {
@@ -11,8 +11,10 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
   const { settings, orders } = useCafe();
+  const { userEmail, signOut } = useAuth();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const pendingCount = orders.filter(o => o.status === 'pending').length;
+  const readyCount = orders.filter(o => o.status === 'ready').length;
 
   return (
     <>
@@ -21,9 +23,14 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
           <div className="bg-primary-container text-on-primary-container p-1.5 rounded-md border-2 border-on-surface flex items-center justify-center transform hover:rotate-12 transition-transform duration-200 cursor-pointer">
             <Coffee size={22} className="stroke-[2.5]" />
           </div>
-          <span className="font-headline-md text-[20px] md:text-headline-md font-bold tracking-tight text-on-primary select-none">
-            {settings.storeName}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="font-headline-md text-[20px] md:text-headline-md font-bold tracking-tight text-on-primary select-none">
+              {settings.storeName}
+            </span>
+            <span className="hidden lg:inline-block text-[11px] font-bold bg-[#ffd982] text-black px-2 py-0.5 rounded border border-black uppercase tracking-wider">
+              Counter
+            </span>
+          </div>
         </div>
 
         <div className="flex items-center gap-3 md:gap-6">
@@ -44,11 +51,16 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
               }`}
             >
               Orders
-              {pendingCount > 0 && (
+              {readyCount > 0 ? (
+                <span className="bg-[#b2f0cf] text-[#006e3a] text-[10px] font-extrabold px-1.5 py-0.5 rounded-full border border-black flex items-center gap-0.5 animate-bounce">
+                  <BellRing size={10} className="stroke-[3]" />
+                  {readyCount} Ready
+                </span>
+              ) : pendingCount > 0 ? (
                 <span className="bg-error text-on-error text-[10px] font-bold px-1.5 py-0.5 rounded-full border border-on-surface">
                   {pendingCount}
                 </span>
-              )}
+              ) : null}
             </button>
             <button
               onClick={() => setActiveTab('menu')}
@@ -69,6 +81,12 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
           </nav>
 
           <div className="flex items-center gap-2">
+            {userEmail && (
+              <span className="hidden xl:inline-block text-[12px] font-bold text-on-primary/90 bg-black/20 px-2.5 py-1 rounded-md border border-white/20">
+                {userEmail}
+              </span>
+            )}
+
             <button
               onClick={() => setActiveTab('settings')}
               className={`p-2 rounded-lg border-2 border-black transition-all cursor-pointer shadow-[2px_2px_0px_0px_#000000] active:translate-x-[1.5px] active:translate-y-[1.5px] active:shadow-none hover:bg-surface-container-high ${
@@ -137,7 +155,7 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
                 <button
                   onClick={async () => {
                     setShowLogoutConfirm(false);
-                    await supabase.auth.signOut();
+                    await signOut();
                   }}
                   className="flex-1 neo-brutal-btn bg-error text-on-error font-bold py-2.5 rounded-lg text-sm cursor-pointer select-none"
                 >

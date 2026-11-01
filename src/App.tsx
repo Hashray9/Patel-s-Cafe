@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
-import { AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
+import { supabase } from './supabaseClient';
 import { CafeProvider, useCafe } from './context/CafeContext';
 import { Header } from './components/Header';
 import { Navigation } from './components/Navigation';
@@ -18,10 +19,20 @@ import {
   PlusCircle,
   Sliders,
   Armchair,
-  Trash2
+  Trash2,
+  User,
+  Mail,
+  Send,
+  AlertTriangle,
+  CheckCircle,
+  Loader
 } from 'lucide-react';
+import { useAuth } from './context/AuthContext';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 const DashboardContent: React.FC = () => {
+  const { userEmail, userRole, userId, cafeId } = useAuth();
   const {
     tables,
     orders,
@@ -56,6 +67,74 @@ const DashboardContent: React.FC = () => {
   const [newTableIsOutdoor, setNewTableIsOutdoor] = useState(false);
   const [tableError, setTableError] = useState('');
   const [tableSuccess, setTableSuccess] = useState('');
+
+  // Cook invite state
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteSuccess, setInviteSuccess] = useState('');
+  const [inviteError, setInviteError] = useState('');
+
+  // Reset modal state
+  const [resetModal, setResetModal] = useState<'tables' | 'menu' | 'orders' | null>(null);
+  const [resetLoading, setResetLoading] = useState(false);
+
+  const handleInviteCook = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setInviteLoading(true);
+    setInviteSuccess('');
+    setInviteError('');
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${API_URL}/api/invite-cook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token || ''}`
+        },
+        body: JSON.stringify({ email: inviteEmail })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to send cook invitation.');
+
+      setInviteSuccess(`Invitation sent to ${inviteEmail}! They will receive an email to set up their cook login.`);
+      setInviteEmail('');
+      setTimeout(() => setInviteSuccess(''), 6000);
+    } catch (err: unknown) {
+      setInviteError(err instanceof Error ? err.message : 'Error sending invite.');
+    } finally {
+      setInviteLoading(false);
+    }
+  };
+
+  const handleExecuteReset = async () => {
+    if (!resetModal) return;
+    setResetLoading(true);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session?.access_token || ''}`
+      };
+
+      if (resetModal === 'tables') {
+        await fetch(`${API_URL}/api/settings/clear-tables`, { method: 'POST', headers });
+      } else if (resetModal === 'menu') {
+        await fetch(`${API_URL}/api/settings/clear-menu`, { method: 'POST', headers });
+      } else if (resetModal === 'orders') {
+        await fetch(`${API_URL}/api/settings/clear-orders`, { method: 'POST', headers });
+      }
+
+      window.location.reload();
+    } catch (err) {
+      alert('Failed to reset: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setResetLoading(false);
+      setResetModal(null);
+    }
+  };
 
   const handleAddTable = (e: React.FormEvent) => {
     e.preventDefault();
@@ -325,6 +404,43 @@ const DashboardContent: React.FC = () => {
               </p>
             </div>
 
+            {/* Account & Session Info Card */}
+            <div className="neo-brutal-card bg-surface rounded-xl p-6 space-y-4">
+              <h3 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2 border-b-2 border-on-surface pb-2">
+                <User size={20} className="stroke-[2.5]" />
+                Active Session & Role
+              </h3>
+
+              <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 bg-surface-container-low rounded-lg border-2 border-black">
+                  <div>
+                    <span className="block text-[11px] uppercase tracking-wider font-bold text-on-surface-variant">Logged In Account</span>
+                    <span className="font-headline-md text-[16px] font-bold text-black">{userEmail || 'Unknown'}</span>
+                  </div>
+                  <span className="mt-2 sm:mt-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-md font-bold text-[13px] bg-[#ffd982] text-black border-2 border-black shadow-[2px_2px_0px_0px_#000000]">
+                    {userRole === 'cook' ? '👨‍🍳 Kitchen / Cook' : '🏢 Counter / Cashier'}
+                  </span>
+                </div>
+
+                {userId && (
+                  <div className="p-3 bg-surface-container-lowest rounded-lg border border-black/20 text-[12px] font-medium text-on-surface-variant flex justify-between items-center">
+                    <span>Account UID:</span>
+                    <span className="font-mono text-[11px] truncate max-w-[240px]">{userId}</span>
+                  </div>
+                )}
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-surface-container-low rounded-lg border-2 border-black">
+                  <div>
+                    <span className="block text-[11px] uppercase tracking-wider font-bold text-on-surface-variant">Cafe Workspace ID</span>
+                    <span className="font-headline-md text-[14px] font-bold text-black font-mono">{cafeId || 'patel-cafe-main'}</span>
+                  </div>
+                  <span className="mt-1 sm:mt-0 text-[11px] font-bold bg-[#b2f0cf] text-[#006e3a] px-2 py-0.5 rounded border border-black">
+                    Scoped Workspace
+                  </span>
+                </div>
+              </div>
+            </div>
+
             {/* Configuration Forms */}
             <div className="neo-brutal-card bg-surface rounded-xl p-6 space-y-6">
               <h3 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2 border-b-2 border-on-surface pb-2">
@@ -505,6 +621,99 @@ const DashboardContent: React.FC = () => {
                 </button>
               </form>
             </div>
+
+            {/* Invite Cook Card */}
+            <div className="neo-brutal-card bg-surface rounded-xl p-6 space-y-4">
+              <h3 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2 border-b-2 border-on-surface pb-2 select-none">
+                <Mail size={20} className="stroke-[2.5]" />
+                Kitchen Team — Invite Cook
+              </h3>
+
+              <p className="font-body-md text-[13.5px] text-on-surface-variant font-medium">
+                Send an email invitation to your kitchen cook. Once they click the link in their email and set their password, their login will be automatically linked to this cafe's kitchen display.
+              </p>
+
+              {inviteSuccess && (
+                <div className="p-3.5 bg-[#b2f0cf] text-[#006e3a] border-2 border-black rounded-lg font-bold text-[13.5px] flex items-start gap-2 shadow-[2px_2px_0px_0px_#000000]">
+                  <CheckCircle size={18} className="stroke-[2.5] shrink-0 mt-0.5" />
+                  <span>{inviteSuccess}</span>
+                </div>
+              )}
+
+              {inviteError && (
+                <div className="p-3.5 bg-[#ffdad6] text-[#ba1a1a] border-2 border-black rounded-lg font-bold text-[13.5px] flex items-start gap-2 shadow-[2px_2px_0px_0px_#000000]">
+                  <AlertTriangle size={18} className="stroke-[2.5] shrink-0 mt-0.5" />
+                  <span>{inviteError}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleInviteCook} className="flex flex-col sm:flex-row gap-3 pt-1">
+                <input
+                  type="email"
+                  placeholder="cook@yourcafe.com"
+                  value={inviteEmail}
+                  onChange={e => setInviteEmail(e.target.value)}
+                  required
+                  disabled={inviteLoading}
+                  className="neo-brutal-input flex-1 text-[14px] py-2.5 px-3 rounded-lg"
+                />
+                <button
+                  type="submit"
+                  disabled={inviteLoading}
+                  className="neo-brutal-btn bg-[#ffd982] text-black py-2.5 px-5 rounded-lg font-label-bold text-[14px] flex items-center justify-center gap-2 border-2 border-black shadow-[2px_2px_0px_0px_#000000] cursor-pointer shrink-0"
+                >
+                  {inviteLoading ? (
+                    <>
+                      <Loader size={16} className="animate-spin stroke-[2.5]" />
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      <Send size={16} className="stroke-[2.5]" />
+                      Send Invite
+                    </>
+                  )}
+                </button>
+              </form>
+            </div>
+
+            {/* Store Layout & Menu Reset (Danger Zone) */}
+            <div className="neo-brutal-card bg-[#fff5f5] border-3 border-[#ba1a1a] rounded-xl p-6 space-y-4 shadow-[4px_4px_0px_0px_#ba1a1a]">
+              <h3 className="font-headline-md text-headline-md text-[#ba1a1a] flex items-center gap-2 border-b-2 border-[#ba1a1a]/30 pb-2 select-none">
+                <AlertTriangle size={20} className="stroke-[2.5]" />
+                Store Layout & Menu Reset
+              </h3>
+
+              <p className="font-body-md text-[13px] text-black/80 font-medium">
+                Setting up a fresh cafe or resetting this branch? You can clear tables, custom menu, or order history safely below.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setResetModal('tables')}
+                  className="neo-brutal-btn bg-white hover:bg-red-50 text-[#ba1a1a] border-2 border-black py-2.5 px-3 rounded-lg font-bold text-[13px] shadow-[2px_2px_0px_0px_#000000] cursor-pointer text-center"
+                >
+                  Clear Table Layout
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setResetModal('menu')}
+                  className="neo-brutal-btn bg-white hover:bg-red-50 text-[#ba1a1a] border-2 border-black py-2.5 px-3 rounded-lg font-bold text-[13px] shadow-[2px_2px_0px_0px_#000000] cursor-pointer text-center"
+                >
+                  Clear All Menu Items
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setResetModal('orders')}
+                  className="neo-brutal-btn bg-white hover:bg-red-50 text-[#ba1a1a] border-2 border-black py-2.5 px-3 rounded-lg font-bold text-[13px] shadow-[2px_2px_0px_0px_#000000] cursor-pointer text-center"
+                >
+                  Clear All Orders
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -556,45 +765,72 @@ const DashboardContent: React.FC = () => {
           />
         )}
       </AnimatePresence>
+
+      {/* Reset Confirmation Modal */}
+      <AnimatePresence>
+        {resetModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => !resetLoading && setResetModal(null)}
+              className="absolute inset-0 bg-on-surface/50 backdrop-blur-xs"
+            />
+            <motion.div
+              initial={{ scale: 0.9, y: 15, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.9, y: 15, opacity: 0 }}
+              className="relative bg-surface w-full max-w-sm p-6 rounded-xl border-3 border-black shadow-[8px_8px_0px_0px_#000000] z-10 text-black space-y-4"
+            >
+              <div className="flex items-center gap-2.5 text-[#ba1a1a]">
+                <AlertTriangle size={24} className="stroke-[2.5]" />
+                <h3 className="font-headline-md text-[20px] font-bold">
+                  {resetModal === 'tables' && 'Clear All Tables?'}
+                  {resetModal === 'menu' && 'Clear All Menu Items?'}
+                  {resetModal === 'orders' && 'Clear All Orders?'}
+                </h3>
+              </div>
+
+              <p className="text-[13.5px] font-medium text-on-surface-variant">
+                {resetModal === 'tables' && 'This will remove all floor plan tables for this cafe. You can add new tables anytime.'}
+                {resetModal === 'menu' && 'This will remove all menu items for this cafe. You will be able to add custom items from scratch.'}
+                {resetModal === 'orders' && 'This will delete all past and active orders for this cafe and reset tables to available.'}
+              </p>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  disabled={resetLoading}
+                  onClick={() => setResetModal(null)}
+                  className="flex-1 neo-brutal-btn bg-white text-black py-2.5 rounded-lg font-bold text-[13px] border-2 border-black shadow-[2px_2px_0px_0px_#000000] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={resetLoading}
+                  onClick={handleExecuteReset}
+                  className="flex-1 neo-brutal-btn bg-[#ba1a1a] text-white py-2.5 rounded-lg font-bold text-[13px] border-2 border-black shadow-[2px_2px_0px_0px_#000000] cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  {resetLoading ? 'Clearing...' : 'Confirm Clear'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
 
-import { useEffect } from 'react';
-import { supabase } from './supabaseClient';
-import type { Session } from '@supabase/supabase-js';
+import { AuthProvider } from './context/AuthContext';
 import { Login } from './components/Login';
 import { ResetPassword } from './components/ResetPassword';
+import { CookDashboard } from './components/CookDashboard';
 
-export const App: React.FC = () => {
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [isPasswordReset, setIsPasswordReset] = useState(false);
-
-  useEffect(() => {
-    // Detect Supabase password-reset flow from URL hash
-    const hash = window.location.hash;
-    if (hash.includes('type=recovery')) {
-      setIsPasswordReset(true);
-    }
-
-    // Check current session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoading(false);
-    });
-
-    // Listen for auth changes — PASSWORD_RECOVERY event also fires here
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'PASSWORD_RECOVERY') {
-        setIsPasswordReset(true);
-      }
-      setSession(session);
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
+const MainApp: React.FC = () => {
+  const { session, loading, userRole, isPasswordReset } = useAuth();
 
   if (loading) {
     return (
@@ -616,10 +852,24 @@ export const App: React.FC = () => {
     return <Login />;
   }
 
+  // Show Kitchen Display System for cook role
+  if (userRole === 'cook') {
+    return <CookDashboard />;
+  }
+
+  // Show full counter/cashier management portal
   return (
     <CafeProvider>
       <DashboardContent />
     </CafeProvider>
+  );
+};
+
+export const App: React.FC = () => {
+  return (
+    <AuthProvider>
+      <MainApp />
+    </AuthProvider>
   );
 };
 export default App;

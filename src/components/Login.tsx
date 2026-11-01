@@ -6,6 +6,7 @@ type LoginView = 'login' | 'forgot';
 
 export const Login: React.FC = () => {
   const [view, setView] = useState<LoginView>('login');
+  const [selectedRole, setSelectedRole] = useState<'counter' | 'cook'>('counter');
 
   // Login state
   const [email, setEmail] = useState('');
@@ -25,8 +26,24 @@ export const Login: React.FC = () => {
     setError(null);
 
     try {
-      const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
-      if (authError) setError(authError.message);
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password });
+      if (authError) {
+        setError(authError.message);
+      } else if (authData.session) {
+        try {
+          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+          await fetch(`${API_URL}/api/user-role`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${authData.session.access_token}`
+            },
+            body: JSON.stringify({ role: selectedRole })
+          });
+        } catch {
+          // ignore network failure on role sync
+        }
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'An unexpected login error occurred.');
     } finally {
@@ -96,6 +113,37 @@ export const Login: React.FC = () => {
             )}
 
             <form onSubmit={handleLogin} className="flex flex-col gap-4">
+              {/* Role Selector */}
+              <div className="flex flex-col gap-1.5">
+                <label className="font-label-bold text-sm font-bold text-on-surface">
+                  Choose Login Role
+                </label>
+                <div className="grid grid-cols-2 gap-2 p-1 bg-[#efe7dd] border-2 border-black rounded-xl shadow-[2px_2px_0px_0px_#000000]">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedRole('counter')}
+                    className={`py-2 px-3 rounded-lg font-headline-md font-bold text-[13px] border-2 transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      selectedRole === 'counter'
+                        ? 'bg-[#ffd982] text-black border-black shadow-[2px_2px_0px_0px_#000000]'
+                        : 'bg-transparent text-on-surface-variant border-transparent hover:text-black'
+                    }`}
+                  >
+                    🏢 Counter
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedRole('cook')}
+                    className={`py-2 px-3 rounded-lg font-headline-md font-bold text-[13px] border-2 transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      selectedRole === 'cook'
+                        ? 'bg-[#ffd982] text-black border-black shadow-[2px_2px_0px_0px_#000000]'
+                        : 'bg-transparent text-on-surface-variant border-transparent hover:text-black'
+                    }`}
+                  >
+                    👨‍🍳 Cook (Kitchen)
+                  </button>
+                </div>
+              </div>
+
               <div className="flex flex-col gap-1.5">
                 <label className="font-label-bold text-sm font-bold text-on-surface" htmlFor="email">
                   Email Address

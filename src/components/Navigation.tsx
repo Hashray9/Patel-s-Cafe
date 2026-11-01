@@ -10,10 +10,17 @@ interface NavigationProps {
 export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab }) => {
   const { orders } = useCafe();
   const pendingCount = orders.filter((o: Order) => o.status === 'pending').length;
+  const readyCount = orders.filter((o: Order) => o.status === 'ready').length;
 
   const tabs = [
     { id: 'home', label: 'Home', icon: Home },
-    { id: 'orders', label: 'Orders', icon: ReceiptText, badge: pendingCount },
+    {
+      id: 'orders',
+      label: 'Orders',
+      icon: ReceiptText,
+      badge: readyCount > 0 ? readyCount : pendingCount,
+      isReady: readyCount > 0,
+    },
     { id: 'menu', label: 'Menu', icon: SquareMenu },
     { id: 'reports', label: 'Reports', icon: TrendingUp },
   ];
@@ -28,19 +35,19 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`relative flex flex-col items-center justify-center py-2 px-4.5 mx-0.5 transition-all select-none ${
-              isActive
+            className={`relative flex flex-col items-center justify-center py-2 px-4.5 mx-0.5 transition-all select-none ${isActive
                 ? 'bg-[#ffd982] text-black border-[2px] border-black rounded-[10px] shadow-[3px_3px_0px_0px_#000000] font-bold'
                 : 'text-on-surface-variant/80 hover:text-black border-[2px] border-transparent font-medium'
-            }`}
+              }`}
           >
             <IconComponent size={20} className="stroke-[2.5]" />
             <span className="font-label-sm text-[11px] mt-0.5 tracking-tight font-bold">
               {tab.label}
             </span>
             {tab.badge && tab.badge > 0 ? (
-              <span className="absolute top-0.5 right-2 bg-[#ba1a1a] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-black">
-                {tab.badge}
+              <span className={`absolute top-0.5 right-2 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-black ${tab.isReady ? 'bg-[#006e3a] animate-bounce' : 'bg-[#ba1a1a]'
+                }`}>
+                {tab.isReady ? `✓${tab.badge}` : tab.badge}
               </span>
             ) : null}
           </button>
