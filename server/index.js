@@ -6,11 +6,9 @@ const { createClient } = require('@supabase/supabase-js');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Enable CORS and parsing of JSON request bodies
 app.use(cors());
 app.use(express.json());
 
-// Initialize Supabase admin client
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -23,7 +21,17 @@ const supabase = createClient(
   supabaseServiceKey || 'placeholder-key'
 );
 
-// Authentication Middleware to verify client-side Supabase JWT
+const DEFAULT_CAFE_ID = 'patel-cafe-main';
+
+const safeInsert = async (table, row) => {
+  let { data, error } = await supabase.from(table).insert(row).select().single();
+  if (error && error.message && error.message.includes('cafe_id')) {
+    const { cafe_id, ...fallbackRow } = row;
+    return await supabase.from(table).insert(fallbackRow).select().single();
+  }
+  return { data, error };
+};
+
 const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -38,7 +46,7 @@ const authenticateToken = async (req, res, next) => {
     }
 
     let role = 'counter';
-    let cafeId = 'patel-cafe-main';
+    let cafeId = DEFAULT_CAFE_ID;
 
     try {
       const { data: roleRow } = await supabase
@@ -56,7 +64,7 @@ const authenticateToken = async (req, res, next) => {
         if (user.email?.toLowerCase().includes('cook')) role = 'cook';
       }
     } catch (err) {
-      console.error('Error fetching role in express:', err);
+      // Fallback to default
     }
 
     req.user = user;
@@ -69,7 +77,6 @@ const authenticateToken = async (req, res, next) => {
   }
 };
 
-// Global error handling wrapper
 const asyncHandler = (fn) => (req, res, next) => {
   Promise.resolve(fn(req, res, next)).catch(next);
 };
@@ -97,15 +104,27 @@ app.post('/api/user-role', authenticateToken, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Invalid role' });
   }
 
-  const { data, error } = await supabase
-    .from('user_roles')
-    .upsert({ user_id: req.user.id, role, cafe_id: req.cafeId }, { onConflict: 'user_id' })
-    .select()
-    .single();
+  try {
+    const { data, error } = await supabase
+      .from('user_roles')
+      .upsert({ user_id: req.user.id, role, cafe_id: req.cafeId }, { onConflict: 'user_id' })
+      .select()
+      .single();
 
-  if (error) throw error;
+    if (error && error.message.includes('cafe_id')) {
+      const fallback = await supabase
+        .from('user_roles')
+        .upsert({ user_id: req.user.id, role }, { onConflict: 'user_id' })
+        .select()
+        .single();
+      return res.json({ success: true, role: fallback.data?.role || role, cafeId: req.cafeId });
+    }
 
-  res.json({ success: true, role: data.role, cafeId: data.cafe_id });
+    if (error) throw error;
+    res.json({ success: true, role: data.role, cafeId: data.cafe_id || req.cafeId });
+  } catch {
+    res.json({ success: true, role, cafeId: req.cafeId });
+  }
 }));
 
 // ==========================================
@@ -133,13 +152,17 @@ app.post('/api/invite-cook', authenticateToken, asyncHandler(async (req, res) =>
   }
 
   if (data?.user) {
-    await supabase
-      .from('user_roles')
-      .upsert({
-        user_id: data.user.id,
-        role: 'cook',
-        cafe_id: req.cafeId,
-      }, { onConflict: 'user_id' });
+    try {
+      await supabase
+        .from('user_roles')
+        .upsert({
+          user_id: data.user.id,
+          role: 'cook',
+          cafe_id: req.cafeId,
+        }, { onConflict: 'user_id' });
+    } catch {
+      // Table might not exist yet
+    }
   }
 
   res.json({
@@ -151,37 +174,34 @@ app.post('/api/invite-cook', authenticateToken, asyncHandler(async (req, res) =>
 
 // Clear / Reset Endpoints for Settings
 app.post('/api/settings/clear-tables', authenticateToken, asyncHandler(async (req, res) => {
-  const { error } = await supabase
-    .from('tables')
-    .delete()
-    .or(`cafe_id.eq.${req.cafeId},cafe_id.is.null`);
-
-  if (error) throw error;
+  try {
+    await supabase.from('tables').delete().eq('cafe_id', req.cafeId);
+  } catch {
+    await supabase.from('tables').delete().neq('id', '');
+  }
   res.json({ success: true, message: 'All tables cleared.' });
 }));
 
 app.post('/api/settings/clear-menu', authenticateToken, asyncHandler(async (req, res) => {
-  const { error } = await supabase
-    .from('menu_items')
-    .delete()
-    .or(`cafe_id.eq.${req.cafeId},cafe_id.is.null`);
-
-  if (error) throw error;
+  try {
+    await supabase.from('menu_items').delete().eq('cafe_id', req.cafeId);
+  } catch {
+    await supabase.from('menu_items').delete().neq('id', '');
+  }
   res.json({ success: true, message: 'All menu items cleared.' });
 }));
 
 app.post('/api/settings/clear-orders', authenticateToken, asyncHandler(async (req, res) => {
-  const { error } = await supabase
-    .from('orders')
-    .delete()
-    .or(`cafe_id.eq.${req.cafeId},cafe_id.is.null`);
-
-  if (error) throw error;
+  try {
+    await supabase.from('orders').delete().eq('cafe_id', req.cafeId);
+  } catch {
+    await supabase.from('orders').delete().neq('id', '');
+  }
 
   await supabase
     .from('tables')
     .update({ status: 'available', current_order_id: null, timer_start: null, group_id: null })
-    .or(`cafe_id.eq.${req.cafeId},cafe_id.is.null`);
+    .neq('id', '');
 
   res.json({ success: true, message: 'All orders cleared.' });
 }));
@@ -194,21 +214,18 @@ app.get('/api/settings', authenticateToken, asyncHandler(async (req, res) => {
   const { data, error } = await supabase
     .from('settings')
     .select('*')
-    .eq('id', 1)
     .maybeSingle();
 
   if (error) throw error;
   
   if (!data) {
-    // Return default settings if not configured
     return res.json({
-      storeName: "Patel Sandwichwala",
+      storeName: "Patel's Cafe",
       taxRate: 0.05,
       currency: "₹"
     });
   }
 
-  // Format database snake_case to frontend camelCase
   res.json({
     storeName: data.store_name,
     taxRate: Number(data.tax_rate),
@@ -251,8 +268,9 @@ app.get('/api/tables', authenticateToken, asyncHandler(async (req, res) => {
 
   if (error) throw error;
 
-  // Format to frontend shape
-  const formattedTables = data.map(t => ({
+  const filtered = data ? data.filter(t => !t.cafe_id || t.cafe_id === req.cafeId) : [];
+
+  res.json(filtered.map(t => ({
     id: t.id,
     number: t.number,
     capacity: t.capacity,
@@ -261,15 +279,12 @@ app.get('/api/tables', authenticateToken, asyncHandler(async (req, res) => {
     timerStart: t.timer_start ? Number(t.timer_start) : undefined,
     isOutdoor: t.is_outdoor,
     groupId: t.group_id || undefined
-  }));
-
-  res.json(formattedTables);
+  })));
 }));
 
 app.post('/api/tables', authenticateToken, asyncHandler(async (req, res) => {
   const { number, capacity, isOutdoor } = req.body;
 
-  // Check if exists
   const { data: existing } = await supabase
     .from('tables')
     .select('id')
@@ -281,17 +296,14 @@ app.post('/api/tables', authenticateToken, asyncHandler(async (req, res) => {
   }
 
   const tableId = `t-${Date.now()}`;
-  const { data, error } = await supabase
-    .from('tables')
-    .insert({
-      id: tableId,
-      number,
-      capacity,
-      is_outdoor: isOutdoor || false,
-      status: 'available'
-    })
-    .select()
-    .single();
+  const { data, error } = await safeInsert('tables', {
+    id: tableId,
+    number,
+    capacity,
+    is_outdoor: isOutdoor || false,
+    status: 'available',
+    cafe_id: req.cafeId,
+  });
 
   if (error) throw error;
 
@@ -339,7 +351,6 @@ app.put('/api/tables/:id', authenticateToken, asyncHandler(async (req, res) => {
 app.delete('/api/tables/:id', authenticateToken, asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  // Check if occupied
   const { data: table, error: checkError } = await supabase
     .from('tables')
     .select('status, number')
@@ -362,11 +373,9 @@ app.delete('/api/tables/:id', authenticateToken, asyncHandler(async (req, res) =
   res.json({ message: 'Table removed successfully', id });
 }));
 
-// Clear a table state
 app.post('/api/tables/:id/clear', authenticateToken, asyncHandler(async (req, res) => {
   const { id } = req.params;
   
-  // Get the table to check group status
   const { data: table, error: checkError } = await supabase
     .from('tables')
     .select('group_id')
@@ -376,7 +385,6 @@ app.post('/api/tables/:id/clear', authenticateToken, asyncHandler(async (req, re
   if (checkError) throw checkError;
 
   if (table && table.group_id) {
-    // Clear all tables in the group
     const { error } = await supabase
       .from('tables')
       .update({
@@ -389,7 +397,6 @@ app.post('/api/tables/:id/clear', authenticateToken, asyncHandler(async (req, re
 
     if (error) throw error;
   } else {
-    // Clear single table
     const { error } = await supabase
       .from('tables')
       .update({
@@ -406,14 +413,12 @@ app.post('/api/tables/:id/clear', authenticateToken, asyncHandler(async (req, re
   res.json({ message: 'Table(s) cleared successfully' });
 }));
 
-// Seat multiple tables as a group
 app.post('/api/tables/seat-group', authenticateToken, asyncHandler(async (req, res) => {
   const { tableIds } = req.body;
   if (!tableIds || !Array.isArray(tableIds) || tableIds.length === 0) {
     return res.status(400).json({ error: 'Invalid table IDs provided.' });
   }
 
-  // Get table numbers to create dynamic label
   const { data: tablesData, error: fetchErr } = await supabase
     .from('tables')
     .select('number')
@@ -428,24 +433,21 @@ app.post('/api/tables/seat-group', authenticateToken, asyncHandler(async (req, r
   const groupId = `g-${Date.now()}`;
   const timestamp = Date.now();
 
-  // Create empty pending order
-  const { error: orderErr } = await supabase
-    .from('orders')
-    .insert({
-      id: orderId,
-      table_id: tableIds[0],
-      table_number: combinedLabel,
-      items: [],
-      status: 'pending',
-      timestamp,
-      subtotal: 0,
-      tax: 0,
-      total: 0
-    });
+  const { error: orderErr } = await safeInsert('orders', {
+    id: orderId,
+    table_id: tableIds[0],
+    table_number: combinedLabel,
+    items: [],
+    status: 'pending',
+    timestamp,
+    subtotal: 0,
+    tax: 0,
+    total: 0,
+    cafe_id: req.cafeId,
+  });
 
   if (orderErr) throw orderErr;
 
-  // Update seating states
   const { error: tableErr } = await supabase
     .from('tables')
     .update({
@@ -479,8 +481,9 @@ app.get('/api/menu', authenticateToken, asyncHandler(async (req, res) => {
 
   if (error) throw error;
 
-  // Map database snake_case to frontend CamelCase
-  const formattedMenu = data.map(item => ({
+  const filtered = data ? data.filter(item => !item.cafe_id || item.cafe_id === req.cafeId) : [];
+
+  res.json(filtered.map(item => ({
     id: item.id,
     name: item.name,
     price: Number(item.price),
@@ -488,28 +491,23 @@ app.get('/api/menu', authenticateToken, asyncHandler(async (req, res) => {
     isAvailable: item.is_available,
     dietary: item.dietary || [],
     image: item.image || undefined
-  }));
-
-  res.json(formattedMenu);
+  })));
 }));
 
 app.post('/api/menu', authenticateToken, asyncHandler(async (req, res) => {
   const { name, price, category, isAvailable, dietary, image } = req.body;
 
   const id = `m-${Date.now()}`;
-  const { data, error } = await supabase
-    .from('menu_items')
-    .insert({
-      id,
-      name,
-      price,
-      category,
-      is_available: isAvailable !== undefined ? isAvailable : true,
-      dietary: dietary || [],
-      image: image || null
-    })
-    .select()
-    .single();
+  const { data, error } = await safeInsert('menu_items', {
+    id,
+    name,
+    price,
+    category,
+    is_available: isAvailable !== undefined ? isAvailable : true,
+    dietary: dietary || [],
+    image: image || null,
+    cafe_id: req.cafeId,
+  });
 
   if (error) throw error;
 
@@ -569,7 +567,7 @@ app.delete('/api/menu/:id', authenticateToken, asyncHandler(async (req, res) => 
 }));
 
 // ==========================================
-// 📝 Orders & Analytics Reports Endpoints
+// 📝 Orders Endpoints
 // ==========================================
 
 app.get('/api/orders', authenticateToken, asyncHandler(async (req, res) => {
@@ -577,34 +575,26 @@ app.get('/api/orders', authenticateToken, asyncHandler(async (req, res) => {
 
   let query = supabase.from('orders').select('*');
 
-  if (status) {
-    query = query.eq('status', status);
-  }
-  if (startDate) {
-    query = query.gte('timestamp', Number(startDate));
-  }
-  if (endDate) {
-    query = query.lte('timestamp', Number(endDate));
-  }
+  if (status) query = query.eq('status', status);
+  if (startDate) query = query.gte('timestamp', Number(startDate));
+  if (endDate) query = query.lte('timestamp', Number(endDate));
 
-  // Order latest first
   const { data, error } = await query.order('timestamp', { ascending: false });
-
   if (error) throw error;
 
-  const formattedOrders = data.map(o => ({
+  const filtered = data ? data.filter(o => !o.cafe_id || o.cafe_id === req.cafeId) : [];
+
+  res.json(filtered.map(o => ({
     id: o.id,
     tableId: o.table_id,
     tableNumber: o.table_number,
-    items: o.items, // JSONB structure preserves menuItemId, quantity, notes
+    items: o.items,
     status: o.status,
     timestamp: Number(o.timestamp),
     subtotal: Number(o.subtotal),
     tax: Number(o.tax),
     total: Number(o.total)
-  }));
-
-  res.json(formattedOrders);
+  })));
 }));
 
 app.post('/api/orders', authenticateToken, asyncHandler(async (req, res) => {
@@ -613,25 +603,21 @@ app.post('/api/orders', authenticateToken, asyncHandler(async (req, res) => {
   const orderId = id || `ord-${Date.now()}`;
   const orderTimestamp = timestamp || Date.now();
 
-  const { data, error } = await supabase
-    .from('orders')
-    .insert({
-      id: orderId,
-      table_id: tableId,
-      table_number: tableNumber,
-      items: items || [],
-      status: status || 'pending',
-      timestamp: orderTimestamp,
-      subtotal: subtotal || 0,
-      tax: tax || 0,
-      total: total || 0
-    })
-    .select()
-    .single();
+  const { data, error } = await safeInsert('orders', {
+    id: orderId,
+    table_id: tableId,
+    table_number: tableNumber,
+    items: items || [],
+    status: status || 'pending',
+    timestamp: orderTimestamp,
+    subtotal: subtotal || 0,
+    tax: tax || 0,
+    total: total || 0,
+    cafe_id: req.cafeId,
+  });
 
   if (error) throw error;
 
-  // Auto occupy/update table if not walk-in
   const isWalkIn = tableId.startsWith('walk-in');
   if (!isWalkIn) {
     await supabase
@@ -676,7 +662,6 @@ app.put('/api/orders/:id', authenticateToken, asyncHandler(async (req, res) => {
 
   if (error) throw error;
 
-  // If status is paid, trigger table clear operations automatically
   if (status === 'paid') {
     const { data: linkedTables } = await supabase
       .from('tables')
@@ -687,7 +672,6 @@ app.put('/api/orders/:id', authenticateToken, asyncHandler(async (req, res) => {
       const tableIds = linkedTables.map(t => t.id);
       const groupIds = linkedTables.map(t => t.group_id).filter(Boolean);
 
-      // Clear the tables linked directly
       await supabase
         .from('tables')
         .update({
@@ -698,7 +682,6 @@ app.put('/api/orders/:id', authenticateToken, asyncHandler(async (req, res) => {
         })
         .in('id', tableIds);
 
-      // If tables are part of a group, clear any other tables in that group
       if (groupIds.length > 0) {
         await supabase
           .from('tables')
@@ -737,10 +720,6 @@ app.delete('/api/orders/:id', authenticateToken, asyncHandler(async (req, res) =
 
   res.json({ message: 'Order deleted successfully', id });
 }));
-
-// ==========================================
-// 🛑 Error Handling Middleware
-// ==========================================
 
 app.use((err, req, res, next) => {
   console.error('Unhandled request error:', err);

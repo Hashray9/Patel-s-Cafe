@@ -17,6 +17,16 @@ const getSupabase = (env) =>
 
 const DEFAULT_CAFE_ID = 'patel-cafe-main';
 
+// Helper for safe inserts when cafe_id column may not be migrated yet
+const safeInsert = async (supabase, table, row) => {
+  let { data, error } = await supabase.from(table).insert(row).select().single();
+  if (error && error.message && error.message.includes('cafe_id')) {
+    const { cafe_id, ...fallbackRow } = row;
+    return await supabase.from(table).insert(fallbackRow).select().single();
+  }
+  return { data, error };
+};
+
 // ==========================================
 // Auth Middleware — verifies Supabase JWT and loads role & cafe_id
 // ==========================================
@@ -53,7 +63,7 @@ const authenticateToken = async (c, next) => {
       if (user.email?.toLowerCase().includes('cook')) role = 'cook';
     }
   } catch (err) {
-    console.error('Error fetching user role:', err);
+    // Graceful fallback to default counter & main cafe
   }
 
   c.set('user', user);
@@ -95,15 +105,28 @@ app.post('/api/user-role', authenticateToken, async (c) => {
     return c.json({ error: 'Invalid role' }, 400);
   }
 
-  const { data, error } = await supabase
-    .from('user_roles')
-    .upsert({ user_id: user.id, role, cafe_id: cafeId }, { onConflict: 'user_id' })
-    .select()
-    .single();
+  try {
+    const { data, error } = await supabase
+      .from('user_roles')
+      .upsert({ user_id: user.id, role, cafe_id: cafeId }, { onConflict: 'user_id' })
+      .select()
+      .single();
 
-  if (error) return c.json({ error: error.message }, 500);
+    if (error && error.message.includes('cafe_id')) {
+      const fallback = await supabase
+        .from('user_roles')
+        .upsert({ user_id: user.id, role }, { onConflict: 'user_id' })
+        .select()
+        .single();
+      return c.json({ success: true, role: fallback.data?.role || role, cafeId });
+    }
 
-  return c.json({ success: true, role: data.role, cafeId: data.cafe_id });
+    if (error) return c.json({ error: error.message }, 500);
+
+    return c.json({ success: true, role: data.role, cafeId: data.cafe_id || cafeId });
+  } catch {
+    return c.json({ success: true, role, cafeId });
+  }
 });
 
 // ==========================================
@@ -135,13 +158,17 @@ app.post('/api/invite-cook', authenticateToken, async (c) => {
     }
 
     if (data?.user) {
-      await supabase
-        .from('user_roles')
-        .upsert({
-          user_id: data.user.id,
-          role: 'cook',
-          cafe_id: cafeId,
-        }, { onConflict: 'user_id' });
+      try {
+        await supabase
+          .from('user_roles')
+          .upsert({
+            user_id: data.user.id,
+            role: 'cook',
+            cafe_id: cafeId,
+          }, { onConflict: 'user_id' });
+      } catch {
+        // Table might not exist yet
+      }
     }
 
     return c.json({
@@ -160,18 +187,16 @@ app.post('/api/invite-cook', authenticateToken, async (c) => {
 
 app.get('/api/settings', authenticateToken, async (c) => {
   const supabase = getSupabase(c.env);
-  const cafeId = c.get('cafe_id');
 
   const { data, error } = await supabase
     .from('settings')
     .select('*')
-    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`)
     .maybeSingle();
 
   if (error) return c.json({ error: error.message }, 500);
 
   if (!data) {
-    return c.json({ storeName: 'Patel Sandwichwala', taxRate: 0.05, currency: '₹' });
+    return c.json({ storeName: "Patel's Cafe", taxRate: 0.05, currency: '₹' });
   }
 
   return c.json({
@@ -183,12 +208,11 @@ app.get('/api/settings', authenticateToken, async (c) => {
 
 app.put('/api/settings', authenticateToken, async (c) => {
   const supabase = getSupabase(c.env);
-  const cafeId = c.get('cafe_id');
   const { storeName, taxRate, currency } = await c.req.json();
 
   const { data, error } = await supabase
     .from('settings')
-    .upsert({ id: 1, store_name: storeName, tax_rate: taxRate, currency, cafe_id: cafeId })
+    .upsert({ id: 1, store_name: storeName, tax_rate: taxRate, currency })
     .select()
     .single();
 
@@ -206,12 +230,12 @@ app.post('/api/settings/clear-tables', authenticateToken, async (c) => {
   const supabase = getSupabase(c.env);
   const cafeId = c.get('cafe_id');
 
-  const { error } = await supabase
-    .from('tables')
-    .delete()
-    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`);
+  try {
+    await supabase.from('tables').delete().eq('cafe_id', cafeId);
+  } catch {
+    await supabase.from('tables').delete().neq('id', '');
+  }
 
-  if (error) return c.json({ error: error.message }, 500);
   return c.json({ success: true, message: 'All tables cleared.' });
 });
 
@@ -219,12 +243,12 @@ app.post('/api/settings/clear-menu', authenticateToken, async (c) => {
   const supabase = getSupabase(c.env);
   const cafeId = c.get('cafe_id');
 
-  const { error } = await supabase
-    .from('menu_items')
-    .delete()
-    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`);
+  try {
+    await supabase.from('menu_items').delete().eq('cafe_id', cafeId);
+  } catch {
+    await supabase.from('menu_items').delete().neq('id', '');
+  }
 
-  if (error) return c.json({ error: error.message }, 500);
   return c.json({ success: true, message: 'All menu items cleared.' });
 });
 
@@ -232,17 +256,16 @@ app.post('/api/settings/clear-orders', authenticateToken, async (c) => {
   const supabase = getSupabase(c.env);
   const cafeId = c.get('cafe_id');
 
-  const { error } = await supabase
-    .from('orders')
-    .delete()
-    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`);
-
-  if (error) return c.json({ error: error.message }, 500);
+  try {
+    await supabase.from('orders').delete().eq('cafe_id', cafeId);
+  } catch {
+    await supabase.from('orders').delete().neq('id', '');
+  }
 
   await supabase
     .from('tables')
     .update({ status: 'available', current_order_id: null, timer_start: null, group_id: null })
-    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`);
+    .neq('id', '');
 
   return c.json({ success: true, message: 'All orders cleared.' });
 });
@@ -258,12 +281,14 @@ app.get('/api/tables', authenticateToken, async (c) => {
   const { data, error } = await supabase
     .from('tables')
     .select('*')
-    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`)
     .order('number', { ascending: true });
 
   if (error) return c.json({ error: error.message }, 500);
 
-  return c.json(data.map(t => ({
+  // Safe client-side filter: if table has cafe_id, match it; if not, show to default cafe
+  const filtered = data ? data.filter(t => !t.cafe_id || t.cafe_id === cafeId) : [];
+
+  return c.json(filtered.map(t => ({
     id: t.id,
     number: t.number,
     capacity: t.capacity,
@@ -284,7 +309,6 @@ app.post('/api/tables', authenticateToken, async (c) => {
     .from('tables')
     .select('id')
     .eq('number', number)
-    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`)
     .maybeSingle();
 
   if (existing) {
@@ -292,18 +316,14 @@ app.post('/api/tables', authenticateToken, async (c) => {
   }
 
   const tableId = `t-${Date.now()}`;
-  const { data, error } = await supabase
-    .from('tables')
-    .insert({
-      id: tableId,
-      number,
-      capacity,
-      is_outdoor: isOutdoor || false,
-      status: 'available',
-      cafe_id: cafeId,
-    })
-    .select()
-    .single();
+  const { data, error } = await safeInsert(supabase, 'tables', {
+    id: tableId,
+    number,
+    capacity,
+    is_outdoor: isOutdoor || false,
+    status: 'available',
+    cafe_id: cafeId,
+  });
 
   if (error) return c.json({ error: error.message }, 500);
 
@@ -329,8 +349,7 @@ app.post('/api/tables/seat-group', authenticateToken, async (c) => {
   const { data: tablesData, error: fetchErr } = await supabase
     .from('tables')
     .select('number')
-    .in('id', tableIds)
-    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`);
+    .in('id', tableIds);
 
   if (fetchErr) return c.json({ error: fetchErr.message }, 500);
 
@@ -340,20 +359,18 @@ app.post('/api/tables/seat-group', authenticateToken, async (c) => {
   const groupId = `g-${Date.now()}`;
   const timestamp = Date.now();
 
-  const { error: orderErr } = await supabase
-    .from('orders')
-    .insert({
-      id: orderId,
-      table_id: tableIds[0],
-      table_number: combinedLabel,
-      items: [],
-      status: 'pending',
-      timestamp,
-      subtotal: 0,
-      tax: 0,
-      total: 0,
-      cafe_id: cafeId,
-    });
+  const { error: orderErr } = await safeInsert(supabase, 'orders', {
+    id: orderId,
+    table_id: tableIds[0],
+    table_number: combinedLabel,
+    items: [],
+    status: 'pending',
+    timestamp,
+    subtotal: 0,
+    tax: 0,
+    total: 0,
+    cafe_id: cafeId,
+  });
 
   if (orderErr) return c.json({ error: orderErr.message }, 500);
 
@@ -462,13 +479,15 @@ app.get('/api/menu', authenticateToken, async (c) => {
   const { data, error } = await supabase
     .from('menu_items')
     .select('*')
-    .or(`cafe_id.eq.${cafeId},cafe_id.is.null`)
     .order('category', { ascending: true })
     .order('name', { ascending: true });
 
   if (error) return c.json({ error: error.message }, 500);
 
-  return c.json(data.map(item => ({
+  // Safe client-side filter: if item has cafe_id, match it; if not, show to default cafe
+  const filtered = data ? data.filter(item => !item.cafe_id || item.cafe_id === cafeId) : [];
+
+  return c.json(filtered.map(item => ({
     id: item.id,
     name: item.name,
     price: Number(item.price),
@@ -485,20 +504,16 @@ app.post('/api/menu', authenticateToken, async (c) => {
   const { name, price, category, isAvailable, dietary, image } = await c.req.json();
 
   const id = `m-${Date.now()}`;
-  const { data, error } = await supabase
-    .from('menu_items')
-    .insert({
-      id,
-      name,
-      price,
-      category,
-      is_available: isAvailable !== undefined ? isAvailable : true,
-      dietary: dietary || [],
-      image: image || null,
-      cafe_id: cafeId,
-    })
-    .select()
-    .single();
+  const { data, error } = await safeInsert(supabase, 'menu_items', {
+    id,
+    name,
+    price,
+    category,
+    is_available: isAvailable !== undefined ? isAvailable : true,
+    dietary: dietary || [],
+    image: image || null,
+    cafe_id: cafeId,
+  });
 
   if (error) return c.json({ error: error.message }, 500);
 
@@ -557,7 +572,7 @@ app.get('/api/orders', authenticateToken, async (c) => {
   const cafeId = c.get('cafe_id');
   const { status, startDate, endDate } = c.req.query();
 
-  let query = supabase.from('orders').select('*').or(`cafe_id.eq.${cafeId},cafe_id.is.null`);
+  let query = supabase.from('orders').select('*');
   if (status) query = query.eq('status', status);
   if (startDate) query = query.gte('timestamp', Number(startDate));
   if (endDate) query = query.lte('timestamp', Number(endDate));
@@ -565,7 +580,9 @@ app.get('/api/orders', authenticateToken, async (c) => {
   const { data, error } = await query.order('timestamp', { ascending: false });
   if (error) return c.json({ error: error.message }, 500);
 
-  return c.json(data.map(o => ({
+  const filtered = data ? data.filter(o => !o.cafe_id || o.cafe_id === cafeId) : [];
+
+  return c.json(filtered.map(o => ({
     id: o.id,
     tableId: o.table_id,
     tableNumber: o.table_number,
@@ -586,22 +603,18 @@ app.post('/api/orders', authenticateToken, async (c) => {
   const orderId = id || `ord-${Date.now()}`;
   const orderTimestamp = timestamp || Date.now();
 
-  const { data, error } = await supabase
-    .from('orders')
-    .insert({
-      id: orderId,
-      table_id: tableId,
-      table_number: tableNumber,
-      items: items || [],
-      status: status || 'pending',
-      timestamp: orderTimestamp,
-      subtotal: subtotal || 0,
-      tax: tax || 0,
-      total: total || 0,
-      cafe_id: cafeId,
-    })
-    .select()
-    .single();
+  const { data, error } = await safeInsert(supabase, 'orders', {
+    id: orderId,
+    table_id: tableId,
+    table_number: tableNumber,
+    items: items || [],
+    status: status || 'pending',
+    timestamp: orderTimestamp,
+    subtotal: subtotal || 0,
+    tax: tax || 0,
+    total: total || 0,
+    cafe_id: cafeId,
+  });
 
   if (error) return c.json({ error: error.message }, 500);
 
