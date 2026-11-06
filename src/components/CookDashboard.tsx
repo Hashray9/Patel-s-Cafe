@@ -1,15 +1,24 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChefHat, CheckCircle, Clock, LogOut, RefreshCw, Flame, User, Volume2, VolumeX, BellRing } from 'lucide-react';
-import { supabase } from '../supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import type { Order, MenuItem, Settings } from '../types';
+import { useCafeLive, orderFromRow, type CafeChange } from '../hooks/useCafeLive';
 
-import { api } from '../api';
+import { api, ApiError } from '../api';
 
+/** Statuses the kitchen screen shows; the API returns only these. */
+const KITCHEN_STATUSES: Order['status'][] = ['pending', 'preparing', 'ready'];
+const KITCHEN_ORDERS_PATH = `/api/orders?status=${KITCHEN_STATUSES.join(',')}`;
+const isKitchenRelevant = (o: Order) => KITCHEN_STATUSES.includes(o.status);
 /** Orders the kitchen has to work on: open and with at least one item. */
 const isKitchenActive = (o: Order) => (o.status === 'pending' || o.status === 'preparing') && o.items.length > 0;
 const itemsSignature = (o: Order) => JSON.stringify(o.items);
+const newestFirst = (a: Order, b: Order) => b.timestamp - a.timestamp;
+
+type AudioCtxCtor = typeof AudioContext;
+const getAudioCtxCtor = (): AudioCtxCtor | undefined =>
+  window.AudioContext || (window as unknown as { webkitAudioContext?: AudioCtxCtor }).webkitAudioContext;
 
 export const CookDashboard: React.FC = () => {
   const { userEmail, cafeId, cafeName, signOut } = useAuth();
@@ -29,43 +38,71 @@ export const CookDashboard: React.FC = () => {
   }, [soundEnabled]);
 
   const audioCtxRef = useRef<AudioContext | null>(null);
+  // One chime waiting for audio to resume is enough; don't queue a pile of them.
+  const ringPendingRef = useRef(false);
 
-  // Initialize and unlock audio context (required for mobile iOS Safari & Android Chrome)
-  const initOrResumeAudio = useCallback(() => {
+  /** Create the AudioContext once; `audioUnlocked` follows its real state from then on. */
+  const getAudioCtx = useCallback((): AudioContext | null => {
+    if (audioCtxRef.current) return audioCtxRef.current;
+    const Ctor = getAudioCtxCtor();
+    if (!Ctor) return null;
     try {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!AudioCtx) return null;
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new AudioCtx();
-      }
-      if (audioCtxRef.current.state === 'suspended') {
-        audioCtxRef.current.resume();
-      }
-      // Play a 1-sample silent buffer to unlock iOS Safari Web Audio
-      const buffer = audioCtxRef.current.createBuffer(1, 1, 22050);
-      const source = audioCtxRef.current.createBufferSource();
-      source.buffer = buffer;
-      source.connect(audioCtxRef.current.destination);
-      source.start(0);
+      // iOS/iPadOS: play like a media app so the ring/silent switch does not mute the alert.
+      const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession;
+      if (session) session.type = 'playback';
 
-      setAudioUnlocked(true);
-      return audioCtxRef.current;
+      const ctx = new Ctor();
+      // Browsers suspend audio (iOS when the screen locks, Chrome in background
+      // tabs). Track it so the "tap to enable sound" banner comes back when needed.
+      ctx.onstatechange = () => setAudioUnlocked(ctx.state === 'running');
+      audioCtxRef.current = ctx;
+      return ctx;
     } catch (err) {
-      console.warn('Audio unlock error:', err);
+      console.warn('Audio init error:', err);
       return null;
     }
   }, []);
 
-  // Unlock audio on first user touch / click anywhere on screen
+  // Start/resume audio. Browsers only allow this inside a user gesture (tap, click, key).
+  const initOrResumeAudio = useCallback(() => {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    try {
+      if (ctx.state !== 'running') {
+        ctx.resume().then(() => setAudioUnlocked(ctx.state === 'running')).catch(() => {});
+      }
+      // A 1-sample silent buffer completes the unlock on iOS Safari.
+      const source = ctx.createBufferSource();
+      source.buffer = ctx.createBuffer(1, 1, 22050);
+      source.connect(ctx.destination);
+      source.start(0);
+      if (ctx.state === 'running') setAudioUnlocked(true);
+    } catch (err) {
+      console.warn('Audio unlock error:', err);
+    }
+  }, [getAudioCtx]);
+
+  // Every tap/click/key press re-arms audio, so a single touch after the phone
+  // was locked brings the sound back. (iOS only counts touchend/click as gestures.)
   useEffect(() => {
-    const handleFirstInteraction = () => {
-      initOrResumeAudio();
+    const onGesture = () => initOrResumeAudio();
+    const opts = { passive: true } as const;
+    window.addEventListener('click', onGesture, opts);
+    window.addEventListener('touchend', onGesture, opts);
+    window.addEventListener('keydown', onGesture, opts);
+    // Coming back to the tab: browsers that remember the earlier tap allow resuming without a new one.
+    const onVisible = () => {
+      const ctx = audioCtxRef.current;
+      if (document.visibilityState === 'visible' && ctx && ctx.state !== 'running') {
+        ctx.resume().catch(() => {});
+      }
     };
-    window.addEventListener('click', handleFirstInteraction, { passive: true });
-    window.addEventListener('touchstart', handleFirstInteraction, { passive: true });
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
-      window.removeEventListener('click', handleFirstInteraction);
-      window.removeEventListener('touchstart', handleFirstInteraction);
+      window.removeEventListener('click', onGesture);
+      window.removeEventListener('touchend', onGesture);
+      window.removeEventListener('keydown', onGesture);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, [initOrResumeAudio]);
 
@@ -103,65 +140,66 @@ export const CookDashboard: React.FC = () => {
   const playOrderChime = useCallback((force = false) => {
     if (!soundEnabledRef.current && !force) return;
 
-    try {
-      let ctx = audioCtxRef.current;
-      if (!ctx) {
-        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        if (AudioCtx) {
-          audioCtxRef.current = new AudioCtx();
-          ctx = audioCtxRef.current;
-        }
+    // Haptics and the visual banner work even when the browser is blocking sound.
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      try {
+        navigator.vibrate([250, 100, 250, 100, 400]);
+      } catch {
+        // ignore vibration errors
       }
-      if (!ctx) return;
-
-      if (ctx.state === 'suspended') {
-        ctx.resume().catch(() => {});
-      }
-
-      const now = ctx.currentTime;
-
-      // Triple kitchen ticket bell chime (E5 -> A5 -> D6)
-      const chimeNotes = [
-        { freq: 659.25, start: 0, dur: 0.35, gain: 0.5 },     // E5
-        { freq: 880.00, start: 0.16, dur: 0.45, gain: 0.55 },  // A5
-        { freq: 1174.66, start: 0.35, dur: 0.75, gain: 0.6 }   // D6
-      ];
-
-      chimeNotes.forEach(({ freq, start, dur, gain: peakGain }) => {
-        const osc = ctx!.createOscillator();
-        const gainNode = ctx!.createGain();
-
-        // Triangle wave gives warm bell-like harmonic richness
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(freq, now + start);
-
-        gainNode.gain.setValueAtTime(0, now + start);
-        gainNode.gain.linearRampToValueAtTime(peakGain, now + start + 0.015);
-        gainNode.gain.exponentialRampToValueAtTime(0.0001, now + start + dur);
-
-        osc.connect(gainNode);
-        gainNode.connect(ctx!.destination);
-
-        osc.start(now + start);
-        osc.stop(now + start + dur);
-      });
-
-      // Mobile haptic vibration if supported (pattern: vibrate, pause, vibrate)
-      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-        try {
-          navigator.vibrate([250, 100, 250, 100, 400]);
-        } catch {
-          // ignore vibration errors
-        }
-      }
-
-      // Visual flash trigger
-      setJustChimed(true);
-      setTimeout(() => setJustChimed(false), 2000);
-    } catch (err) {
-      console.warn('Audio chime playback error:', err);
     }
-  }, []);
+    setJustChimed(true);
+    setTimeout(() => setJustChimed(false), 2000);
+
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+
+    const ring = () => {
+      try {
+        const now = ctx.currentTime;
+
+        // Triple kitchen ticket bell chime (E5 -> A5 -> D6)
+        const chimeNotes = [
+          { freq: 659.25, start: 0, dur: 0.35, gain: 0.5 },     // E5
+          { freq: 880.00, start: 0.16, dur: 0.45, gain: 0.55 },  // A5
+          { freq: 1174.66, start: 0.35, dur: 0.75, gain: 0.6 }   // D6
+        ];
+
+        chimeNotes.forEach(({ freq, start, dur, gain: peakGain }) => {
+          const osc = ctx.createOscillator();
+          const gainNode = ctx.createGain();
+
+          // Triangle wave gives warm bell-like harmonic richness
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(freq, now + start);
+
+          gainNode.gain.setValueAtTime(0, now + start);
+          gainNode.gain.linearRampToValueAtTime(peakGain, now + start + 0.015);
+          gainNode.gain.exponentialRampToValueAtTime(0.0001, now + start + dur);
+
+          osc.connect(gainNode);
+          gainNode.connect(ctx.destination);
+
+          osc.start(now + start);
+          osc.stop(now + start + dur);
+        });
+      } catch (err) {
+        console.warn('Audio chime playback error:', err);
+      }
+    };
+
+    // A suspended context has a stopped clock: wait for it to resume (right
+    // away, or on the cook's next tap) and ring then.
+    if (ctx.state === 'running') {
+      ring();
+    } else if (!ringPendingRef.current) {
+      ringPendingRef.current = true;
+      ctx.resume()
+        .then(ring)
+        .catch(() => {})
+        .finally(() => { ringPendingRef.current = false; });
+    }
+  }, [getAudioCtx]);
 
   const playOrderChimeRef = useRef(playOrderChime);
   useEffect(() => {
@@ -175,63 +213,126 @@ export const CookDashboard: React.FC = () => {
     return () => clearInterval(timer);
   }, []);
 
-  // Snapshot of active orders (id -> items) from the previous load; null until first load.
+  // ---------------------------------------------------------------------------
+  // Data. Orders live in a ref (the source of truth) and are mirrored to state
+  // for rendering, so live events and API snapshots go through one place
+  // (`commitOrders`), which also decides when to chime.
+  // ---------------------------------------------------------------------------
+  const ordersRef = useRef<Order[]>([]);
+  const menuIdsRef = useRef<Set<string>>(new Set());
+  // Active tickets (id -> items) as last shown; null until the first load so
+  // existing tickets don't chime when the screen opens.
   const lastActiveRef = useRef<Map<string, string> | null>(null);
+  // Incremented for every live order event; lets a slow API snapshot detect it is stale.
+  const eventSeqRef = useRef(0);
+  // Only the newest orders fetch may apply its result.
+  const fetchGenRef = useRef(0);
+  const metaTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const loadData = useCallback(async () => {
-    try {
-      const [menuData, ordersData, settingsData] = await Promise.all([
-        api<MenuItem[]>('/api/menu'),
-        api<Order[]>('/api/orders'),
-        api<Settings>('/api/settings'),
-      ]);
+  const commitOrders = useCallback((list: Order[]) => {
+    const next = list.filter(isKitchenRelevant).sort(newestFirst);
 
-      // Chime when a new ticket appears or an open ticket's items change.
-      const active = new Map(ordersData.filter(isKitchenActive).map(o => [o.id, itemsSignature(o)]));
-      const previous = lastActiveRef.current;
-      if (previous) {
-        const hasNewWork = [...active].some(([id, sig]) => previous.get(id) !== sig);
-        if (hasNewWork) playOrderChimeRef.current();
+    // Chime when a new ticket appears or an open ticket's items change.
+    const active = new Map(next.filter(isKitchenActive).map(o => [o.id, itemsSignature(o)]));
+    const previous = lastActiveRef.current;
+    if (previous && [...active].some(([id, sig]) => previous.get(id) !== sig)) {
+      playOrderChimeRef.current();
+    }
+    lastActiveRef.current = active;
+
+    ordersRef.current = next;
+    setOrders(next);
+  }, []);
+
+  const loadMeta = useCallback(async () => {
+    const [menuData, settingsData] = await Promise.all([
+      api<MenuItem[]>('/api/menu'),
+      api<Settings>('/api/settings'),
+    ]);
+    menuIdsRef.current = new Set(menuData.map(m => m.id));
+    setMenu(menuData);
+    setSettings(settingsData);
+  }, []);
+
+  /** Coalesce bursts (e.g. a bulk menu edit) into one menu/settings reload. */
+  const scheduleMetaReload = useCallback(() => {
+    if (metaTimerRef.current) clearTimeout(metaTimerRef.current);
+    metaTimerRef.current = setTimeout(() => {
+      metaTimerRef.current = null;
+      loadMeta().catch(err => console.error('Error loading menu:', err));
+    }, 300);
+  }, [loadMeta]);
+
+  useEffect(() => () => {
+    if (metaTimerRef.current) clearTimeout(metaTimerRef.current);
+  }, []);
+
+  const loadOrders = useCallback(async () => {
+    const gen = ++fetchGenRef.current;
+    // If a live event lands while the request is in flight, the snapshot may
+    // predate it, so fetch again (a few times at most; the events are already shown).
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const seqAtStart = eventSeqRef.current;
+      const data = await api<Order[]>(KITCHEN_ORDERS_PATH).catch((err: unknown) => {
+        // An API deployed before the multi-status filter answers 400; take every
+        // order instead (commitOrders keeps only the kitchen ones).
+        if (err instanceof ApiError && err.status === 400) return api<Order[]>('/api/orders');
+        throw err;
+      });
+      if (gen !== fetchGenRef.current) return;
+      if (seqAtStart === eventSeqRef.current) {
+        commitOrders(data);
+        return;
       }
-      lastActiveRef.current = active;
+    }
+  }, [commitOrders]);
 
-      setMenu(menuData);
-      setOrders(ordersData);
-      setSettings(settingsData);
+  /** Apply one pushed change instantly, with no API round trip for orders. */
+  const handleLiveChange = useCallback((change: CafeChange) => {
+    if (change.table === 'orders') {
+      eventSeqRef.current++;
+      const others = ordersRef.current.filter(o => o.id !== change.id);
+      if (change.op === 'DELETE' || !change.record) {
+        commitOrders(others);
+        return;
+      }
+      const order = orderFromRow(change.record);
+      commitOrders([order, ...others]);
+      // A dish added to the menu moments ago: fetch the menu so its name shows.
+      if (order.items.some(i => !menuIdsRef.current.has(i.menuItemId))) scheduleMetaReload();
+    } else if (change.table === 'menu_items' || change.table === 'settings') {
+      scheduleMetaReload();
+    }
+  }, [commitOrders, scheduleMetaReload]);
+
+  const resync = useCallback(async (full: boolean) => {
+    try {
+      await Promise.all([loadOrders(), full ? loadMeta() : null]);
     } catch (err) {
       console.error('Error loading cook data:', err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadOrders, loadMeta]);
 
-  // Initial load + live updates for THIS cafe's orders only (RLS also enforces it).
+  // Live updates for THIS cafe only: the channel is private and the database
+  // only lets members of this cafe join it.
+  const liveStatus = useCafeLive(cafeId, { onChange: handleLiveChange, onResync: resync });
+
+  // First load right away; the channel resyncs again once it is subscribed.
   useEffect(() => {
     if (!cafeId) return;
-    // Data fetch on mount; state is only set after the request resolves.
+    // Data fetch on mount; state is only set after the requests resolve.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadData();
-
-    const channel = supabase
-      .channel(`kitchen-orders-${cafeId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'orders', filter: `cafe_id=eq.${cafeId}` },
-        () => { loadData(); }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [loadData, cafeId]);
+    resync(true);
+  }, [cafeId, resync]);
 
   const handleMarkReady = async (orderId: string) => {
     setUpdatingOrderId(orderId);
     try {
-      await api(`/api/orders/${orderId}`, { method: 'PUT', body: JSON.stringify({ status: 'ready' }) });
-      // Optimistic update; the realtime event will confirm.
-      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'ready' } : o));
+      const updated = await api<Order>(`/api/orders/${orderId}`, { method: 'PUT', body: JSON.stringify({ status: 'ready' }) });
+      // Show it at once; the live event carries the same row.
+      commitOrders([updated, ...ordersRef.current.filter(o => o.id !== orderId)]);
     } catch (err) {
       console.error('Error marking order ready:', err);
       alert(err instanceof Error ? err.message : 'Could not mark the order ready.');
@@ -313,9 +414,28 @@ export const CookDashboard: React.FC = () => {
             <span className="hidden xs:inline">{soundEnabled ? 'Sound ON' : 'Muted'}</span>
           </button>
 
+          {/* Live connection status */}
+          <span
+            className={`hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-lg border-2 text-[11px] font-bold uppercase tracking-wider select-none ${
+              liveStatus === 'live'
+                ? 'border-[#b2f0cf] text-[#b2f0cf]'
+                : 'border-[#ffd982] text-[#ffd982]'
+            }`}
+            title={liveStatus === 'live'
+              ? 'Live: new orders appear instantly'
+              : 'Reconnecting: still checking for orders every few seconds'}
+          >
+            <span className={`w-2 h-2 rounded-full ${liveStatus === 'live' ? 'bg-[#b2f0cf]' : 'bg-[#ffd982] animate-pulse'}`} />
+            {liveStatus === 'live' ? 'Live' : 'Reconnecting'}
+          </span>
+          <span
+            className={`sm:hidden w-2.5 h-2.5 rounded-full border border-black ${liveStatus === 'live' ? 'bg-[#b2f0cf]' : 'bg-[#ffd982] animate-pulse'}`}
+            title={liveStatus === 'live' ? 'Live' : 'Reconnecting'}
+          />
+
           {/* Refresh */}
           <button
-            onClick={() => loadData()}
+            onClick={() => resync(true)}
             className="p-2 rounded-lg border-2 border-white/30 bg-transparent text-white hover:bg-white/10 transition-all cursor-pointer"
             title="Refresh Orders"
           >

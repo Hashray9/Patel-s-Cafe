@@ -1,14 +1,15 @@
 -- ============================================================================
 -- Patel's Cafe — full schema for a FRESH Supabase project (multi-cafe).
 --
--- Existing databases: do NOT run this; run migrations/004_multi_tenant.sql.
+-- Existing databases: do NOT run this; run the numbered files in migrations/ in order.
 -- No seed data here — cafes are created by owners through the app's sign-up.
 -- To load the Patel's Cafe demo menu into a cafe, see migrations/populate_cafe.sql.
 --
 -- Isolation model:
 --   * Every row belongs to exactly one cafe (cafe_id NOT NULL).
 --   * Each auth user belongs to at most one cafe, with role owner | counter | cook.
---   * Browsers may only SELECT rows of their own cafe (RLS; used by Realtime).
+--   * Browsers may only SELECT rows of their own cafe (RLS), and may only join
+--     the Realtime Broadcast topic of their own cafe (cafe:<cafe_id>).
 --   * All writes go through the API (Cloudflare Worker) with the service-role key.
 -- ============================================================================
 
@@ -149,3 +150,75 @@ BEGIN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.tables;
   END IF;
 END $$;
+
+-- 6. Realtime Broadcast: instant per-cafe updates (see migrations/005_realtime_broadcast.sql)
+--    Clients join the PRIVATE topic cafe:<cafe_id>; only that cafe's members may join.
+--    After a fresh install: Dashboard -> Realtime -> Settings -> turn OFF "Allow public access".
+-- 6.1 Trigger function ---------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.broadcast_cafe_change()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  row_data jsonb;
+  payload  jsonb;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    row_data := to_jsonb(OLD);
+  ELSE
+    row_data := to_jsonb(NEW);
+  END IF;
+
+  payload := jsonb_build_object(
+    'table', TG_TABLE_NAME,
+    'op',    TG_OP,
+    'id',    COALESCE(row_data ->> 'id', row_data ->> 'cafe_id')
+  );
+  -- Orders carry the whole row so the kitchen can render it immediately.
+  IF TG_TABLE_NAME = 'orders' AND TG_OP <> 'DELETE' THEN
+    payload := payload || jsonb_build_object('record', row_data);
+  END IF;
+
+  BEGIN
+    PERFORM realtime.send(payload, 'change', 'cafe:' || (row_data ->> 'cafe_id'), true);
+  EXCEPTION WHEN OTHERS THEN
+    -- A Realtime hiccup must never block saving an order. Screens catch up
+    -- through their reconnect / periodic resync.
+    RAISE WARNING 'broadcast_cafe_change failed: %', SQLERRM;
+  END;
+
+  RETURN NULL;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.broadcast_cafe_change() FROM PUBLIC, anon, authenticated;
+
+-- 6.2 Triggers -----------------------------------------------------------------
+DROP TRIGGER IF EXISTS broadcast_orders_change     ON public.orders;
+DROP TRIGGER IF EXISTS broadcast_tables_change     ON public.tables;
+DROP TRIGGER IF EXISTS broadcast_menu_items_change ON public.menu_items;
+DROP TRIGGER IF EXISTS broadcast_settings_change   ON public.settings;
+
+CREATE TRIGGER broadcast_orders_change
+  AFTER INSERT OR UPDATE OR DELETE ON public.orders
+  FOR EACH ROW EXECUTE FUNCTION public.broadcast_cafe_change();
+CREATE TRIGGER broadcast_tables_change
+  AFTER INSERT OR UPDATE OR DELETE ON public.tables
+  FOR EACH ROW EXECUTE FUNCTION public.broadcast_cafe_change();
+CREATE TRIGGER broadcast_menu_items_change
+  AFTER INSERT OR UPDATE OR DELETE ON public.menu_items
+  FOR EACH ROW EXECUTE FUNCTION public.broadcast_cafe_change();
+CREATE TRIGGER broadcast_settings_change
+  AFTER INSERT OR UPDATE OR DELETE ON public.settings
+  FOR EACH ROW EXECUTE FUNCTION public.broadcast_cafe_change();
+
+-- 6.3 Who may listen: members of that cafe only --------------------------------
+DROP POLICY IF EXISTS cafe_members_receive_broadcasts ON realtime.messages;
+CREATE POLICY cafe_members_receive_broadcasts ON realtime.messages
+  FOR SELECT TO authenticated
+  USING (
+    realtime.messages.extension = 'broadcast'
+    AND realtime.topic() = 'cafe:' || public.my_cafe_id()
+  );

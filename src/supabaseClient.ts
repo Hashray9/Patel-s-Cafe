@@ -9,5 +9,12 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 export const supabase = createClient(
   supabaseUrl || 'https://placeholder.supabase.co',
-  supabaseAnonKey || 'placeholder-key'
+  supabaseAnonKey || 'placeholder-key',
+  {
+    realtime: {
+      // Send the Realtime heartbeat from a Web Worker. Browsers throttle timers
+      // in background tabs, which would otherwise drop the kitchen's live socket.
+      worker: true,
+    },
+  }
 );

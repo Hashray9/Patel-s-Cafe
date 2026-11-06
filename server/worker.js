@@ -700,7 +700,8 @@ app.get('/api/orders', anyMember, async (c) => {
   const { status, startDate, endDate } = c.req.query();
   let query = c.get('db').from('orders').select('*').eq('cafe_id', c.get('cafeId'));
 
-  if (status) query = query.eq('status', oneOf(status, ORDER_STATUSES, 'Status'));
+  // ?status=pending or ?status=pending,preparing,ready
+  if (status) query = query.in('status', status.split(',').map((s) => oneOf(s.trim(), ORDER_STATUSES, 'Status')));
   if (startDate) query = query.gte('timestamp', number(startDate, 'startDate', { integer: true }));
   if (endDate) query = query.lte('timestamp', number(endDate, 'endDate', { integer: true }));
 

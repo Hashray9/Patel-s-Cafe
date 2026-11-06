@@ -1,9 +1,9 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import type { Table, MenuItem, Order, OrderItem, Settings } from '../types';
-import { supabase } from '../supabaseClient';
 import { api } from '../api';
 import { useAuth } from './AuthContext';
+import { useCafeLive } from '../hooks/useCafeLive';
 
 interface CafeContextType {
   tables: Table[];
@@ -32,11 +32,13 @@ const DEFAULT_SETTINGS: Settings = {
 };
 
 const SETTINGS_SAVE_DELAY_MS = 600;
+const LIVE_RELOAD_DELAY_MS = 100;
 
 /**
  * Data for the counter/owner dashboard of ONE cafe. Only mounted for signed-in
  * members, so it loads on mount. The API scopes every call to the caller's cafe;
- * the Realtime channel is filtered by cafe_id (and RLS enforces it server-side).
+ * live updates arrive on the private Realtime topic cafe:<id>, which the database
+ * lets only this cafe's members join.
  */
 export const CafeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { cafeId } = useAuth();
@@ -54,7 +56,8 @@ export const CafeProvider: React.FC<{ children: React.ReactNode }> = ({ children
         api<MenuItem[]>('/api/menu'),
         api<Order[]>('/api/orders'),
       ]);
-      setSettings(settingsData);
+      // Don't overwrite settings the owner is still typing (a debounced save is pending).
+      if (!settingsTimer.current) setSettings(settingsData);
       setTables(tablesData);
       setMenu(menuData);
       setOrders(ordersData);
@@ -77,22 +80,24 @@ export const CafeProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Data fetch on mount; state is only set after the requests resolve.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData();
-
-    // Live sync across this cafe's devices only.
-    const filter = `cafe_id=eq.${cafeId}`;
-    const channel = supabase
-      .channel(`counter-sync-${cafeId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter }, () => { loadData(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tables', filter }, () => { loadData(); })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, [cafeId, loadData]);
+
+  // Live sync across this cafe's devices only (private per-cafe Broadcast topic).
+  // One save can touch an order and several tables, so a burst of events is
+  // coalesced into a single reload.
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleReload = useCallback(() => {
+    if (reloadTimer.current) clearTimeout(reloadTimer.current);
+    reloadTimer.current = setTimeout(() => {
+      reloadTimer.current = null;
+      loadData();
+    }, LIVE_RELOAD_DELAY_MS);
+  }, [loadData]);
+  useCafeLive(cafeId, { onChange: scheduleReload, onResync: () => { loadData(); } });
 
   useEffect(() => () => {
     if (settingsTimer.current) clearTimeout(settingsTimer.current);
+    if (reloadTimer.current) clearTimeout(reloadTimer.current);
   }, []);
 
   const clearTable = useCallback(async (tableId: string) => {
@@ -203,6 +208,7 @@ export const CafeProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setSettings(newSettings);
     if (settingsTimer.current) clearTimeout(settingsTimer.current);
     settingsTimer.current = setTimeout(async () => {
+      settingsTimer.current = null;
       try {
         await api<Settings>('/api/settings', { method: 'PUT', body: JSON.stringify(newSettings) });
       } catch (err) {
