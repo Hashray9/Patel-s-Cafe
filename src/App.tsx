@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase } from './supabaseClient';
+import { api, errorMessage } from './api';
 import { CafeProvider, useCafe } from './context/CafeContext';
 import { Header } from './components/Header';
 import { Navigation } from './components/Navigation';
@@ -21,18 +21,24 @@ import {
   Armchair,
   Trash2,
   User,
-  Mail,
-  Send,
   AlertTriangle,
-  CheckCircle,
-  Loader
+  Lock,
+  LogOut,
+  RefreshCw
 } from 'lucide-react';
 import { useAuth } from './context/AuthContext';
+import type { UserRole } from './types';
+import { StaffManager } from './components/StaffManager';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const ROLE_BADGES: Record<UserRole, string> = {
+  owner: '👑 Owner',
+  counter: '🏢 Counter / Cashier',
+  cook: '👨‍🍳 Kitchen / Cook',
+};
 
 const DashboardContent: React.FC = () => {
-  const { userEmail, userRole, userId, cafeId } = useAuth();
+  const { userEmail, userRole, cafeName } = useAuth();
+  const isOwner = userRole === 'owner';
   const {
     tables,
     orders,
@@ -68,75 +74,31 @@ const DashboardContent: React.FC = () => {
   const [tableError, setTableError] = useState('');
   const [tableSuccess, setTableSuccess] = useState('');
 
-  // Cook invite state
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteLoading, setInviteLoading] = useState(false);
-  const [inviteSuccess, setInviteSuccess] = useState('');
-  const [inviteError, setInviteError] = useState('');
-
   // Reset modal state
   const [resetModal, setResetModal] = useState<'tables' | 'menu' | 'orders' | null>(null);
   const [resetLoading, setResetLoading] = useState(false);
-
-  const handleInviteCook = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setInviteLoading(true);
-    setInviteSuccess('');
-    setInviteError('');
-
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(`${API_URL}/api/invite-cook`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token || ''}`
-        },
-        body: JSON.stringify({ email: inviteEmail })
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to send cook invitation.');
-
-      setInviteSuccess(`Invitation sent to ${inviteEmail}! They will receive an email to set up their cook login.`);
-      setInviteEmail('');
-      setTimeout(() => setInviteSuccess(''), 6000);
-    } catch (err: unknown) {
-      setInviteError(err instanceof Error ? err.message : 'Error sending invite.');
-    } finally {
-      setInviteLoading(false);
-    }
-  };
 
   const handleExecuteReset = async () => {
     if (!resetModal) return;
     setResetLoading(true);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const headers = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session?.access_token || ''}`
-      };
-
-      if (resetModal === 'tables') {
-        await fetch(`${API_URL}/api/settings/clear-tables`, { method: 'POST', headers });
-      } else if (resetModal === 'menu') {
-        await fetch(`${API_URL}/api/settings/clear-menu`, { method: 'POST', headers });
-      } else if (resetModal === 'orders') {
-        await fetch(`${API_URL}/api/settings/clear-orders`, { method: 'POST', headers });
-      }
-
+      const endpoint = {
+        tables: '/api/settings/clear-tables',
+        menu: '/api/settings/clear-menu',
+        orders: '/api/settings/clear-orders',
+      }[resetModal];
+      await api(endpoint, { method: 'POST' });
       window.location.reload();
     } catch (err) {
-      alert('Failed to reset: ' + (err instanceof Error ? err.message : String(err)));
+      alert('Failed to reset: ' + errorMessage(err));
     } finally {
       setResetLoading(false);
       setResetModal(null);
     }
   };
 
-  const handleAddTable = (e: React.FormEvent) => {
+  const handleAddTable = async (e: React.FormEvent) => {
     e.preventDefault();
     setTableError('');
     setTableSuccess('');
@@ -149,7 +111,7 @@ const DashboardContent: React.FC = () => {
     const formattedNumber = newTableNumber.trim();
 
     try {
-      addTable({
+      await addTable({
         number: formattedNumber,
         capacity: newTableCapacity,
         isOutdoor: newTableIsOutdoor
@@ -164,7 +126,7 @@ const DashboardContent: React.FC = () => {
     }
   };
 
-  const handleRemoveTable = (tableId: string, tableNumber: string) => {
+  const handleRemoveTable = async (tableId: string, tableNumber: string) => {
     setTableError('');
     setTableSuccess('');
 
@@ -178,7 +140,7 @@ const DashboardContent: React.FC = () => {
 
     if (window.confirm(`Are you sure you want to remove Table ${tableNumber}? This action cannot be undone.`)) {
       try {
-        removeTable(tableId);
+        await removeTable(tableId);
         setTableSuccess(`Table ${tableNumber} was removed.`);
         setTimeout(() => setTableSuccess(''), 3000);
       } catch (err: unknown) {
@@ -400,7 +362,7 @@ const DashboardContent: React.FC = () => {
                 App Settings
               </h1>
               <p className="font-body-md text-on-surface-variant font-medium">
-                Store config options and simulation diagnostics tool.
+                {isOwner ? 'Store configuration, tables, staff and data resets.' : 'Your account and cafe workspace.'}
               </p>
             </div>
 
@@ -418,21 +380,14 @@ const DashboardContent: React.FC = () => {
                     <span className="font-headline-md text-[16px] font-bold text-black">{userEmail || 'Unknown'}</span>
                   </div>
                   <span className="mt-2 sm:mt-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-md font-bold text-[13px] bg-[#ffd982] text-black border-2 border-black shadow-[2px_2px_0px_0px_#000000]">
-                    {userRole === 'cook' ? '👨‍🍳 Kitchen / Cook' : '🏢 Counter / Cashier'}
+                    {userRole ? ROLE_BADGES[userRole] : '—'}
                   </span>
                 </div>
 
-                {userId && (
-                  <div className="p-3 bg-surface-container-lowest rounded-lg border border-black/20 text-[12px] font-medium text-on-surface-variant flex justify-between items-center">
-                    <span>Account UID:</span>
-                    <span className="font-mono text-[11px] truncate max-w-[240px]">{userId}</span>
-                  </div>
-                )}
-
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-surface-container-low rounded-lg border-2 border-black">
                   <div>
-                    <span className="block text-[11px] uppercase tracking-wider font-bold text-on-surface-variant">Cafe Workspace ID</span>
-                    <span className="font-headline-md text-[14px] font-bold text-black font-mono">{cafeId || 'patel-cafe-main'}</span>
+                    <span className="block text-[11px] uppercase tracking-wider font-bold text-on-surface-variant">Cafe</span>
+                    <span className="font-headline-md text-[16px] font-bold text-black">{cafeName}</span>
                   </div>
                   <span className="mt-1 sm:mt-0 text-[11px] font-bold bg-[#b2f0cf] text-[#006e3a] px-2 py-0.5 rounded border border-black">
                     Scoped Workspace
@@ -441,6 +396,17 @@ const DashboardContent: React.FC = () => {
               </div>
             </div>
 
+            {!isOwner && (
+              <div className="neo-brutal-card bg-surface rounded-xl p-6 flex items-start gap-3">
+                <Lock size={20} className="stroke-[2.5] shrink-0 mt-0.5" />
+                <p className="font-body-md text-[13.5px] text-on-surface-variant font-medium">
+                  Store settings, tables, staff and data resets can only be changed by an owner of this cafe.
+                </p>
+              </div>
+            )}
+
+            {isOwner && (
+            <>
             {/* Configuration Forms */}
             <div className="neo-brutal-card bg-surface rounded-xl p-6 space-y-6">
               <h3 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2 border-b-2 border-on-surface pb-2">
@@ -622,60 +588,8 @@ const DashboardContent: React.FC = () => {
               </form>
             </div>
 
-            {/* Invite Cook Card */}
-            <div className="neo-brutal-card bg-surface rounded-xl p-6 space-y-4">
-              <h3 className="font-headline-md text-headline-md text-on-surface flex items-center gap-2 border-b-2 border-on-surface pb-2 select-none">
-                <Mail size={20} className="stroke-[2.5]" />
-                Kitchen Team — Invite Cook
-              </h3>
-
-              <p className="font-body-md text-[13.5px] text-on-surface-variant font-medium">
-                Send an email invitation to your kitchen cook. Once they click the link in their email and set their password, their login will be automatically linked to this cafe's kitchen display.
-              </p>
-
-              {inviteSuccess && (
-                <div className="p-3.5 bg-[#b2f0cf] text-[#006e3a] border-2 border-black rounded-lg font-bold text-[13.5px] flex items-start gap-2 shadow-[2px_2px_0px_0px_#000000]">
-                  <CheckCircle size={18} className="stroke-[2.5] shrink-0 mt-0.5" />
-                  <span>{inviteSuccess}</span>
-                </div>
-              )}
-
-              {inviteError && (
-                <div className="p-3.5 bg-[#ffdad6] text-[#ba1a1a] border-2 border-black rounded-lg font-bold text-[13.5px] flex items-start gap-2 shadow-[2px_2px_0px_0px_#000000]">
-                  <AlertTriangle size={18} className="stroke-[2.5] shrink-0 mt-0.5" />
-                  <span>{inviteError}</span>
-                </div>
-              )}
-
-              <form onSubmit={handleInviteCook} className="flex flex-col sm:flex-row gap-3 pt-1">
-                <input
-                  type="email"
-                  placeholder="cook@yourcafe.com"
-                  value={inviteEmail}
-                  onChange={e => setInviteEmail(e.target.value)}
-                  required
-                  disabled={inviteLoading}
-                  className="neo-brutal-input flex-1 text-[14px] py-2.5 px-3 rounded-lg"
-                />
-                <button
-                  type="submit"
-                  disabled={inviteLoading}
-                  className="neo-brutal-btn bg-[#ffd982] text-black py-2.5 px-5 rounded-lg font-label-bold text-[14px] flex items-center justify-center gap-2 border-2 border-black shadow-[2px_2px_0px_0px_#000000] cursor-pointer shrink-0"
-                >
-                  {inviteLoading ? (
-                    <>
-                      <Loader size={16} className="animate-spin stroke-[2.5]" />
-                      Sending...
-                    </>
-                  ) : (
-                    <>
-                      <Send size={16} className="stroke-[2.5]" />
-                      Send Invite
-                    </>
-                  )}
-                </button>
-              </form>
-            </div>
+            {/* Staff & Roles */}
+            <StaffManager />
 
             {/* Store Layout & Menu Reset (Danger Zone) */}
             <div className="neo-brutal-card bg-[#fff5f5] border-3 border-[#ba1a1a] rounded-xl p-6 space-y-4 shadow-[4px_4px_0px_0px_#ba1a1a]">
@@ -714,6 +628,8 @@ const DashboardContent: React.FC = () => {
                 </button>
               </div>
             </div>
+            </>
+            )}
           </div>
         )}
 
@@ -828,9 +744,10 @@ import { AuthProvider } from './context/AuthContext';
 import { Login } from './components/Login';
 import { ResetPassword } from './components/ResetPassword';
 import { CookDashboard } from './components/CookDashboard';
+import { CreateCafe } from './components/CreateCafe';
 
 const MainApp: React.FC = () => {
-  const { session, loading, userRole, isPasswordReset } = useAuth();
+  const { session, loading, userRole, cafeId, isPasswordReset, membershipError, refreshMembership, signOut } = useAuth();
 
   if (loading) {
     return (
@@ -852,12 +769,43 @@ const MainApp: React.FC = () => {
     return <Login />;
   }
 
+  if (membershipError) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
+        <div className="w-full max-w-sm neo-brutal-card bg-surface p-6 space-y-4 text-center">
+          <AlertTriangle size={32} className="mx-auto text-[#ba1a1a] stroke-[2.5]" />
+          <h2 className="font-headline-md text-[20px] font-bold">Can&apos;t reach the server</h2>
+          <p className="text-[13.5px] font-medium text-on-surface-variant">{membershipError}</p>
+          <div className="flex gap-3">
+            <button
+              onClick={signOut}
+              className="flex-1 neo-brutal-btn bg-white text-black py-2.5 rounded-lg font-bold text-[13px] border-2 border-black flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <LogOut size={14} className="stroke-[2.5]" /> Sign out
+            </button>
+            <button
+              onClick={refreshMembership}
+              className="flex-1 neo-brutal-btn bg-primary-container text-on-primary-container py-2.5 rounded-lg font-bold text-[13px] border-2 border-black flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <RefreshCw size={14} className="stroke-[2.5]" /> Retry
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Signed in but not part of any cafe yet -> create one (becomes owner)
+  if (!cafeId || !userRole) {
+    return <CreateCafe />;
+  }
+
   // Show Kitchen Display System for cook role
   if (userRole === 'cook') {
     return <CookDashboard />;
   }
 
-  // Show full counter/cashier management portal
+  // Owner & counter: full management portal (owner-only sections are gated inside)
   return (
     <CafeProvider>
       <DashboardContent />

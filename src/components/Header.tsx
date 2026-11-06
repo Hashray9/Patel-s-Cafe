@@ -11,7 +11,7 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
   const { settings, orders } = useCafe();
-  const { userEmail, signOut } = useAuth();
+  const { userEmail, userRole, cafeName, signOut } = useAuth();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const pendingCount = orders.filter(o => o.status === 'pending').length;
   const readyCount = orders.filter(o => o.status === 'ready').length;
@@ -25,10 +25,10 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
           </div>
           <div className="flex items-center gap-2">
             <span className="font-headline-md text-[20px] md:text-headline-md font-bold tracking-tight text-on-primary select-none">
-              {settings.storeName}
+              {settings.storeName || cafeName}
             </span>
             <span className="hidden lg:inline-block text-[11px] font-bold bg-[#ffd982] text-black px-2 py-0.5 rounded border border-black uppercase tracking-wider">
-              Counter
+              {userRole === 'owner' ? 'Owner' : 'Counter'}
             </span>
           </div>
         </div>

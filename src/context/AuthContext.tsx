@@ -1,130 +1,123 @@
+/* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { supabase } from '../supabaseClient';
 import type { Session } from '@supabase/supabase-js';
+import { supabase } from '../supabaseClient';
+import { api, errorMessage } from '../api';
+import type { UserRole } from '../types';
 
-export type UserRole = 'counter' | 'cook';
+export type { UserRole };
+
+interface Membership {
+  userId: string;
+  role: UserRole | null;
+  cafeId: string | null;
+  cafeName: string | null;
+}
+
+interface MeResponse {
+  id: string;
+  email: string;
+  role: UserRole | null;
+  cafeId: string | null;
+  cafeName: string | null;
+}
 
 interface AuthContextType {
   session: Session | null;
+  /** True until we know who the user is AND which cafe/role they have. */
   loading: boolean;
-  userRole: UserRole | null;
   userEmail: string | null;
   userId: string | null;
+  /** null when the signed-in account is not linked to any cafe yet. */
+  userRole: UserRole | null;
   cafeId: string | null;
+  cafeName: string | null;
+  /** Error while loading the membership (network / server). */
+  membershipError: string | null;
+  /** Arrived through a password-recovery or invite e-mail link. */
   isPasswordReset: boolean;
+  refreshMembership: () => Promise<void>;
+  createCafe: (name: string) => Promise<void>;
   signOut: () => Promise<void>;
-  updateRole: (newRole: UserRole) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const hashIndicatesPasswordSetup = () => {
+  const hash = window.location.hash;
+  return hash.includes('type=recovery') || hash.includes('type=invite');
+};
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [userRole, setUserRole] = useState<UserRole | null>(null);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [cafeId, setCafeId] = useState<string | null>(null);
-  const [isPasswordReset, setIsPasswordReset] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
+  const [membership, setMembership] = useState<Membership | null>(null);
+  const [membershipError, setMembershipError] = useState<{ userId: string; message: string } | null>(null);
+  const [isPasswordReset, setIsPasswordReset] = useState(hashIndicatesPasswordSetup);
 
-  const fetchRole = useCallback(async (accessToken: string) => {
+  const userId = session?.user?.id ?? null;
+
+  const loadMembership = useCallback(async () => {
+    const { data: { session: s } } = await supabase.auth.getSession();
+    if (!s) return;
     try {
-      const res = await fetch(`${API_URL}/api/me`, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`
-        }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setUserRole(data.role || 'counter');
-        setCafeId(data.cafeId || 'patel-cafe-main');
-      } else {
-        // Default to counter if role endpoint fails (backward compat)
-        setUserRole('counter');
-        setCafeId('patel-cafe-main');
-      }
-    } catch {
-      setUserRole('counter');
-      setCafeId('patel-cafe-main');
+      const me = await api<MeResponse>('/api/me');
+      setMembership({ userId: me.id, role: me.role, cafeId: me.cafeId, cafeName: me.cafeName });
+      setMembershipError(null);
+    } catch (err) {
+      setMembershipError({ userId: s.user.id, message: errorMessage(err, 'Could not load your account.') });
     }
   }, []);
 
   useEffect(() => {
-    // Detect password-reset flow from URL hash
-    const hash = window.location.hash;
-    if (hash.includes('type=recovery')) {
-      setIsPasswordReset(true);
-    }
-
-    // Check current session
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
-      setSession(s);
-      if (s) {
-        setUserEmail(s.user?.email || null);
-        fetchRole(s.access_token);
-      }
-      setLoading(false);
-    });
-
-    // Listen for auth changes
+    // onAuthStateChange fires INITIAL_SESSION immediately, so no separate getSession() is needed.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
-      if (event === 'PASSWORD_RECOVERY') {
-        setIsPasswordReset(true);
-      }
+      if (event === 'PASSWORD_RECOVERY') setIsPasswordReset(true);
       setSession(s);
-      if (s) {
-        setUserEmail(s.user?.email || null);
-        fetchRole(s.access_token);
-      } else {
-        setUserRole(null);
-        setUserEmail(null);
-      }
-      setLoading(false);
+      setAuthReady(true);
     });
-
     return () => subscription.unsubscribe();
-  }, [fetchRole]);
+  }, []);
+
+  // (Re)load the cafe membership whenever a different user signs in.
+  useEffect(() => {
+    // Fetch on user change; state is only set after the request resolves.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (userId) loadMembership();
+  }, [userId, loadMembership]);
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
-    setSession(null);
-    setUserRole(null);
-    setUserEmail(null);
+    setMembership(null);
+    setMembershipError(null);
     setIsPasswordReset(false);
   }, []);
 
-  const updateRole = useCallback(async (newRole: UserRole) => {
-    setUserRole(newRole);
-    try {
-      const { data: { session: s } } = await supabase.auth.getSession();
-      if (s) {
-        await fetch(`${API_URL}/api/user-role`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${s.access_token}`
-          },
-          body: JSON.stringify({ role: newRole })
-        });
-      }
-    } catch (err) {
-      console.error('Failed to update role on backend', err);
-    }
+  const createCafe = useCallback(async (name: string) => {
+    const me = await api<MeResponse>('/api/cafes', { method: 'POST', body: JSON.stringify({ name }) });
+    setMembership({ userId: me.id, role: me.role, cafeId: me.cafeId, cafeName: me.cafeName });
+    setMembershipError(null);
   }, []);
+
+  // Only trust membership/error state that belongs to the currently signed-in user.
+  const currentMembership = membership && membership.userId === userId ? membership : null;
+  const currentError = membershipError && membershipError.userId === userId ? membershipError.message : null;
+  const loading = !authReady || (!!userId && !currentMembership && !currentError);
 
   return (
     <AuthContext.Provider value={{
       session,
       loading,
-      userRole,
-      userEmail,
-      userId: session?.user?.id || null,
-      cafeId,
+      userEmail: session?.user?.email ?? null,
+      userId,
+      userRole: currentMembership?.role ?? null,
+      cafeId: currentMembership?.cafeId ?? null,
+      cafeName: currentMembership?.cafeName ?? null,
+      membershipError: currentError,
       isPasswordReset,
+      refreshMembership: loadMembership,
+      createCafe,
       signOut,
-      updateRole,
     }}>
       {children}
     </AuthContext.Provider>
@@ -138,4 +131,3 @@ export const useAuth = () => {
   }
   return context;
 };
-

@@ -1,5 +1,5 @@
 === PROJECT OVERVIEW & SECURITY POSTURE ===
-Patel's Cafe PWA is a serverless frontend-only web application run entirely in the browser. The attack surface is limited to client-side vulnerabilities, package dependency safety, client-side input validation, and secure localStorage operations.
+Patel's Cafe is a multi-tenant PWA: React frontend, Cloudflare Worker API (service-role access, per-request cafe scoping), and Supabase Postgres/Auth/Realtime with read-only own-cafe RLS. The main attack surface is the API's authorization logic and tenant isolation.
 
 === APPLIED SECURITY FIXES AND PATCHES ===
 - [2026-05-29] Initial setup of the project with secure default dependencies and Vite configurations.
@@ -35,6 +35,7 @@ Patel's Cafe PWA is a serverless frontend-only web application run entirely in t
 - [2026-06-14] Migrated data persistence from browser LocalStorage to a secure 3-tier Node/Express backend. Implemented JWT token verification middleware (`Authorization: Bearer <JWT>`) validated via official Supabase Auth API (`auth.getUser`) on all endpoints. Configured backend database access using secure Supabase Service Role credentials and initialized environment templates (`.env.example`) in frontend and backend folders to prevent committing sensitive keys.
 - [2026-06-14] Replaced browser-native `window.confirm` logout prompts with custom, animated Neo-Brutalist overlay confirmation dialogs in the `Header` component to ensure styling consistency.
 - [2026-06-14] Installed `sharp` utility and executed a conversion script to convert all 17 public menu PNG assets to highly compressed WebP files, reducing payload size by 90% (from 13.5MB to 1.5MB) to solve frontend rendering lag and optimize page hydration speed.
+- [2026-11-06] Multi-tenant isolation overhaul. Every API query is now scoped by the caller's cafe_id taken only from user_roles (previously updates/deletes by id and 'clear orders' could touch other cafes, and settings were one global row). Unlinked accounts no longer fall back to the default cafe. Removed client-selectable roles at login and the e-mail-contains-"cook" role heuristic; roles (owner/counter/cook) are assigned only by an owner. Added owner-only staff management, settings, table and reset endpoints; cooks may only move orders to preparing/ready. Order totals are recomputed server-side from the cafe's own menu prices. Enabled read-only, own-cafe RLS policies on all tables (scopes Supabase Realtime) and dropped the permissive user_roles policy. Removed the duplicate Express/Fly.io backend; the Cloudflare Worker is the only API.
 
 === DEPENDENCY VULNERABILITY UPDATES ===
 - Tracked via 'npm audit' to identify risk levels of nested dependencies.

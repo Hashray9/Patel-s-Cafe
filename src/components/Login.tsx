@@ -2,11 +2,10 @@ import React, { useState } from 'react';
 import { Coffee, AlertCircle, Loader, CheckCircle, ArrowLeft } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 
-type LoginView = 'login' | 'forgot';
+type LoginView = 'login' | 'forgot' | 'register';
 
 export const Login: React.FC = () => {
   const [view, setView] = useState<LoginView>('login');
-  const [selectedRole, setSelectedRole] = useState<'counter' | 'cook'>('counter');
 
   // Login state
   const [email, setEmail] = useState('');
@@ -20,30 +19,23 @@ export const Login: React.FC = () => {
   const [forgotError, setForgotError] = useState<string | null>(null);
   const [forgotSent, setForgotSent] = useState(false);
 
+  // Register-your-cafe state
+  const [cafeName, setCafeName] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regConfirm, setRegConfirm] = useState('');
+  const [regLoading, setRegLoading] = useState(false);
+  const [regError, setRegError] = useState<string | null>(null);
+  const [regNeedsConfirm, setRegNeedsConfirm] = useState(false);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
 
     try {
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password });
-      if (authError) {
-        setError(authError.message);
-      } else if (authData.session) {
-        try {
-          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-          await fetch(`${API_URL}/api/user-role`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${authData.session.access_token}`
-            },
-            body: JSON.stringify({ role: selectedRole })
-          });
-        } catch {
-          // ignore network failure on role sync
-        }
-      }
+      const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+      if (authError) setError(authError.message);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'An unexpected login error occurred.');
     } finally {
@@ -71,6 +63,56 @@ export const Login: React.FC = () => {
     } finally {
       setForgotLoading(false);
     }
+  };
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRegError(null);
+
+    const name = cafeName.trim();
+    if (name.length < 2) {
+      setRegError('Please enter your cafe or restaurant name.');
+      return;
+    }
+    if (regPassword.length < 6) {
+      setRegError('Password must be at least 6 characters.');
+      return;
+    }
+    if (regPassword !== regConfirm) {
+      setRegError('Passwords do not match.');
+      return;
+    }
+
+    setRegLoading(true);
+    try {
+      // The cafe itself is created right after the first sign-in (CreateCafe screen),
+      // pre-filled with this name. If e-mail confirmation is off we are signed in now.
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email: regEmail,
+        password: regPassword,
+        options: {
+          data: { cafe_name: name },
+          emailRedirectTo: `${window.location.origin}${window.location.pathname}`,
+        },
+      });
+      if (signUpError) {
+        setRegError(signUpError.message);
+      } else if (!data.session) {
+        setRegNeedsConfirm(true);
+      }
+    } catch (err: unknown) {
+      setRegError(err instanceof Error ? err.message : 'An unexpected error occurred.');
+    } finally {
+      setRegLoading(false);
+    }
+  };
+
+  const switchToRegister = () => {
+    setRegEmail(email);
+    setRegError(null);
+    setRegNeedsConfirm(false);
+    setError(null);
+    setView('register');
   };
 
   const switchToForgot = () => {
@@ -113,37 +155,6 @@ export const Login: React.FC = () => {
             )}
 
             <form onSubmit={handleLogin} className="flex flex-col gap-4">
-              {/* Role Selector */}
-              <div className="flex flex-col gap-1.5">
-                <label className="font-label-bold text-sm font-bold text-on-surface">
-                  Choose Login Role
-                </label>
-                <div className="grid grid-cols-2 gap-2 p-1 bg-[#efe7dd] border-2 border-black rounded-xl shadow-[2px_2px_0px_0px_#000000]">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedRole('counter')}
-                    className={`py-2 px-3 rounded-lg font-headline-md font-bold text-[13px] border-2 transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                      selectedRole === 'counter'
-                        ? 'bg-[#ffd982] text-black border-black shadow-[2px_2px_0px_0px_#000000]'
-                        : 'bg-transparent text-on-surface-variant border-transparent hover:text-black'
-                    }`}
-                  >
-                    🏢 Counter
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedRole('cook')}
-                    className={`py-2 px-3 rounded-lg font-headline-md font-bold text-[13px] border-2 transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                      selectedRole === 'cook'
-                        ? 'bg-[#ffd982] text-black border-black shadow-[2px_2px_0px_0px_#000000]'
-                        : 'bg-transparent text-on-surface-variant border-transparent hover:text-black'
-                    }`}
-                  >
-                    👨‍🍳 Cook (Kitchen)
-                  </button>
-                </div>
-              </div>
-
               <div className="flex flex-col gap-1.5">
                 <label className="font-label-bold text-sm font-bold text-on-surface" htmlFor="email">
                   Email Address
@@ -155,7 +166,7 @@ export const Login: React.FC = () => {
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   disabled={loading}
-                  placeholder="name@patelcafe.com"
+                  placeholder="name@yourcafe.com"
                   className="neo-brutal-input w-full"
                 />
               </div>
@@ -200,6 +211,144 @@ export const Login: React.FC = () => {
                 )}
               </button>
             </form>
+
+            <div className="border-t-2 border-black/15 pt-4 text-center">
+              <p className="font-body-md text-sm text-on-surface-variant">
+                Own a cafe or restaurant?
+              </p>
+              <button
+                type="button"
+                onClick={switchToRegister}
+                className="mt-1 text-sm font-bold text-on-surface underline underline-offset-2 hover:text-primary transition-colors cursor-pointer"
+              >
+                Register your cafe
+              </button>
+              <p className="font-body-md text-xs text-on-surface-variant mt-2">
+                Staff: ask your cafe owner to invite your email.
+              </p>
+            </div>
+          </>
+        )}
+
+        {/* ── REGISTER YOUR CAFE VIEW ── */}
+        {view === 'register' && (
+          <>
+            <div className="text-center">
+              <h2 className="font-body-lg text-lg font-bold text-on-surface">Register Your Cafe</h2>
+              <p className="font-body-md text-sm text-on-surface-variant mt-1">
+                Create an owner account. Your cafe gets its own private tables, menu, orders and staff.
+              </p>
+            </div>
+
+            {regNeedsConfirm ? (
+              <div className="bg-[#b2f0cf] text-[#006e3a] p-4 border-3 border-black flex items-start gap-2 rounded shadow-[2px_2px_0px_0px_#000000]">
+                <CheckCircle size={20} className="stroke-[2.5] shrink-0 mt-0.5" />
+                <span className="font-body-md text-sm font-semibold">
+                  Almost done! We sent a confirmation link to <strong>{regEmail}</strong>. Open it, then log in to finish setting up <strong>{cafeName.trim()}</strong>.
+                </span>
+              </div>
+            ) : (
+              <>
+                {regError && (
+                  <div className="bg-error-container text-on-error-container p-3 border-3 border-black flex items-start gap-2 rounded shadow-[2px_2px_0px_0px_#000000]">
+                    <AlertCircle size={20} className="stroke-[2.5] shrink-0 mt-0.5" />
+                    <span className="font-body-md text-sm font-semibold">{regError}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleRegister} className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="font-label-bold text-sm font-bold text-on-surface" htmlFor="reg-cafe">
+                      Cafe / Restaurant Name
+                    </label>
+                    <input
+                      id="reg-cafe"
+                      type="text"
+                      value={cafeName}
+                      onChange={(e) => setCafeName(e.target.value)}
+                      required
+                      maxLength={80}
+                      disabled={regLoading}
+                      placeholder="e.g. Sunrise Cafe"
+                      className="neo-brutal-input w-full"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="font-label-bold text-sm font-bold text-on-surface" htmlFor="reg-email">
+                      Owner Email
+                    </label>
+                    <input
+                      id="reg-email"
+                      type="email"
+                      value={regEmail}
+                      onChange={(e) => setRegEmail(e.target.value)}
+                      required
+                      disabled={regLoading}
+                      placeholder="owner@yourcafe.com"
+                      className="neo-brutal-input w-full"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-1.5">
+                      <label className="font-label-bold text-sm font-bold text-on-surface" htmlFor="reg-password">
+                        Password
+                      </label>
+                      <input
+                        id="reg-password"
+                        type="password"
+                        value={regPassword}
+                        onChange={(e) => setRegPassword(e.target.value)}
+                        required
+                        disabled={regLoading}
+                        placeholder="••••••••"
+                        className="neo-brutal-input w-full"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="font-label-bold text-sm font-bold text-on-surface" htmlFor="reg-confirm">
+                        Confirm
+                      </label>
+                      <input
+                        id="reg-confirm"
+                        type="password"
+                        value={regConfirm}
+                        onChange={(e) => setRegConfirm(e.target.value)}
+                        required
+                        disabled={regLoading}
+                        placeholder="••••••••"
+                        className="neo-brutal-input w-full"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={regLoading}
+                    className="neo-brutal-btn bg-primary text-on-primary font-bold py-3 mt-2 rounded transition-all cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    {regLoading ? (
+                      <>
+                        <Loader size={18} className="animate-spin stroke-[2.5]" />
+                        Creating Account...
+                      </>
+                    ) : (
+                      'Create Owner Account'
+                    )}
+                  </button>
+                </form>
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setView('login')}
+              className="flex items-center justify-center gap-1.5 text-sm font-semibold text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
+            >
+              <ArrowLeft size={14} className="stroke-[2.5]" />
+              Back to Login
+            </button>
           </>
         )}
 
@@ -241,7 +390,7 @@ export const Login: React.FC = () => {
                       onChange={(e) => setForgotEmail(e.target.value)}
                       required
                       disabled={forgotLoading}
-                      placeholder="name@patelcafe.com"
+                      placeholder="name@yourcafe.com"
                       className="neo-brutal-input w-full"
                     />
                   </div>

@@ -1,9 +1,9 @@
 /* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import type { Table, MenuItem, Order, OrderItem, Settings } from '../types';
 import { supabase } from '../supabaseClient';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import { api } from '../api';
+import { useAuth } from './AuthContext';
 
 interface CafeContextType {
   tables: Table[];
@@ -26,289 +26,163 @@ interface CafeContextType {
 const CafeContext = createContext<CafeContextType | undefined>(undefined);
 
 const DEFAULT_SETTINGS: Settings = {
-  storeName: "Patel Sandwichwala",
+  storeName: '',
   taxRate: 0.05,
   currency: '₹',
 };
 
-const getAuthHeaders = async () => {
-  const { data: { session } } = await supabase.auth.getSession();
-  return {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${session?.access_token || ''}`
-  };
-};
+const SETTINGS_SAVE_DELAY_MS = 600;
 
+/**
+ * Data for the counter/owner dashboard of ONE cafe. Only mounted for signed-in
+ * members, so it loads on mount. The API scopes every call to the caller's cafe;
+ * the Realtime channel is filtered by cafe_id (and RLS enforces it server-side).
+ */
 export const CafeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { cafeId } = useAuth();
   const [tables, setTables] = useState<Table[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const settingsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadData = useCallback(async () => {
     try {
-      const headers = await getAuthHeaders();
-      const [settingsRes, tablesRes, menuRes, ordersRes] = await Promise.all([
-        fetch(`${API_URL}/api/settings`, { headers }),
-        fetch(`${API_URL}/api/tables`, { headers }),
-        fetch(`${API_URL}/api/menu`, { headers }),
-        fetch(`${API_URL}/api/orders`, { headers })
+      const [settingsData, tablesData, menuData, ordersData] = await Promise.all([
+        api<Settings>('/api/settings'),
+        api<Table[]>('/api/tables'),
+        api<MenuItem[]>('/api/menu'),
+        api<Order[]>('/api/orders'),
       ]);
-
-      if (!settingsRes.ok || !tablesRes.ok || !menuRes.ok || !ordersRes.ok) {
-        throw new Error('Failed to load cafe data from backend API');
-      }
-
-      const settingsData = await settingsRes.json();
-      const tablesData = await tablesRes.json();
-      const menuData = await menuRes.json();
-      const ordersData = await ordersRes.json();
-
       setSettings(settingsData);
       setTables(tablesData);
       setMenu(menuData);
       setOrders(ordersData);
     } catch (err) {
-      console.error('Error loading initial cafe data:', err);
+      console.error('Error loading cafe data:', err);
     }
+  }, []);
+
+  const reloadTablesAndOrders = useCallback(async () => {
+    const [tablesData, ordersData] = await Promise.all([
+      api<Table[]>('/api/tables'),
+      api<Order[]>('/api/orders'),
+    ]);
+    setTables(tablesData);
+    setOrders(ordersData);
   }, []);
 
   useEffect(() => {
-    // Listen for auth events to load/unload state dynamically
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_IN') {
-        loadData();
-      } else if (event === 'SIGNED_OUT') {
-        setTables([]);
-        setOrders([]);
-        setMenu([]);
-        setSettings(DEFAULT_SETTINGS);
-      }
-    });
+    if (!cafeId) return;
+    // Data fetch on mount; state is only set after the requests resolve.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadData();
 
-    // Handle initial state if already logged in
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        loadData();
-      }
-    });
-
-    // Real-time synchronization for orders & tables across team devices
+    // Live sync across this cafe's devices only.
+    const filter = `cafe_id=eq.${cafeId}`;
     const channel = supabase
-      .channel('counter-live-sync')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
-        loadData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tables' }, () => {
-        loadData();
-      })
+      .channel(`counter-sync-${cafeId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter }, () => { loadData(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tables', filter }, () => { loadData(); })
       .subscribe();
 
     return () => {
-      subscription.unsubscribe();
       supabase.removeChannel(channel);
     };
-  }, [loadData]);
+  }, [cafeId, loadData]);
+
+  useEffect(() => () => {
+    if (settingsTimer.current) clearTimeout(settingsTimer.current);
+  }, []);
 
   const clearTable = useCallback(async (tableId: string) => {
     try {
-      const headers = await getAuthHeaders();
-      const res = await fetch(`${API_URL}/api/tables/${tableId}/clear`, {
-        method: 'POST',
-        headers
-      });
-      if (!res.ok) throw new Error('Failed to clear table state on backend.');
-
-      // Reload tables and orders to keep client state synced
-      const [tRes, oRes] = await Promise.all([
-        fetch(`${API_URL}/api/tables`, { headers }),
-        fetch(`${API_URL}/api/orders`, { headers })
-      ]);
-      setTables(await tRes.json());
-      setOrders(await oRes.json());
+      await api(`/api/tables/${tableId}/clear`, { method: 'POST' });
+      await reloadTablesAndOrders();
     } catch (err) {
       console.error('Error clearing table:', err);
     }
-  }, []);
+  }, [reloadTablesAndOrders]);
 
   const updateTableStatus = useCallback(async (tableId: string, status: Table['status']) => {
     try {
-      const headers = await getAuthHeaders();
-      const table = tables.find(t => t.id === tableId);
-      if (!table) return;
-
-      const timerStart = status === 'occupied' ? Date.now() : null;
-      const currentOrderId = status !== 'occupied' ? null : table.currentOrderId;
-
-      const res = await fetch(`${API_URL}/api/tables/${tableId}`, {
-        method: 'PUT',
-        headers,
-        body: JSON.stringify({
-          ...table,
-          status,
-          timerStart,
-          currentOrderId
-        })
-      });
-      if (!res.ok) throw new Error('Failed to update table status.');
-      const updated = await res.json();
+      const body = status === 'occupied'
+        ? { status, timerStart: Date.now() }
+        : { status, timerStart: null, currentOrderId: null, groupId: null };
+      const updated = await api<Table>(`/api/tables/${tableId}`, { method: 'PUT', body: JSON.stringify(body) });
       setTables(prev => prev.map(t => t.id === tableId ? updated : t));
     } catch (err) {
       console.error('Error updating table status:', err);
     }
-  }, [tables]);
+  }, []);
 
   const updateTableCapacity = useCallback(async (tableId: string, capacity: number) => {
     try {
-      const headers = await getAuthHeaders();
-      const table = tables.find(t => t.id === tableId);
-      if (!table) return;
-
-      const res = await fetch(`${API_URL}/api/tables/${tableId}`, {
-        method: 'PUT',
-        headers,
-        body: JSON.stringify({
-          ...table,
-          capacity
-        })
-      });
-      if (!res.ok) throw new Error('Failed to update table capacity.');
-      const updated = await res.json();
+      const updated = await api<Table>(`/api/tables/${tableId}`, { method: 'PUT', body: JSON.stringify({ capacity }) });
       setTables(prev => prev.map(t => t.id === tableId ? updated : t));
     } catch (err) {
       console.error('Error updating table capacity:', err);
     }
-  }, [tables]);
+  }, []);
 
+  /**
+   * Save the item list for a table / walk-in. Creates the order if none is open,
+   * updates it otherwise, and deletes it (freeing the table) when the list is empty.
+   * The server computes subtotal / tax / total from the cafe's own menu prices.
+   */
   const createOrder = useCallback(async (tableId: string, items: OrderItem[]) => {
     try {
-      const headers = await getAuthHeaders();
       const isWalkIn = tableId.startsWith('walk-in');
-      const table = isWalkIn
-        ? { number: 'Walk-in', currentOrderId: undefined }
-        : tables.find(t => t.id === tableId);
-      if (!table) return;
+      const table = isWalkIn ? null : tables.find(t => t.id === tableId);
+      if (!isWalkIn && !table) return;
 
-      const existingActiveOrder = !isWalkIn && table.currentOrderId
+      const existingActiveOrder = table?.currentOrderId
         ? orders.find(o => o.id === table.currentOrderId && o.status !== 'paid')
         : orders.find(o => o.tableId === tableId && o.status !== 'paid');
 
       if (items.length === 0) {
         if (existingActiveOrder) {
-          // Delete active order since it's empty
-          const res = await fetch(`${API_URL}/api/orders/${existingActiveOrder.id}`, {
-            method: 'DELETE',
-            headers
-          });
-          if (!res.ok) throw new Error('Failed to delete empty order.');
+          await api(`/api/orders/${existingActiveOrder.id}`, { method: 'DELETE' });
         }
         if (!isWalkIn) {
           await clearTable(tableId);
         } else {
-          // Refresh walk-in order list
-          const oRes = await fetch(`${API_URL}/api/orders`, { headers });
-          setOrders(await oRes.json());
+          setOrders(await api<Order[]>('/api/orders'));
         }
         return;
       }
 
-      // Calculate checkout totals
-      const sub = items.reduce((acc, curr) => {
-        const item = menu.find(m => m.id === curr.menuItemId);
-        return acc + (item ? item.price * curr.quantity : 0);
-      }, 0);
-
-      const taxVal = parseFloat((sub * settings.taxRate).toFixed(2));
-      const totalVal = parseFloat((sub * (1 + settings.taxRate)).toFixed(2));
-
       if (existingActiveOrder) {
-        // Update the existing order on the server
-        const res = await fetch(`${API_URL}/api/orders/${existingActiveOrder.id}`, {
+        const updated = await api<Order>(`/api/orders/${existingActiveOrder.id}`, {
           method: 'PUT',
-          headers,
-          body: JSON.stringify({
-            items,
-            status: existingActiveOrder.status,
-            subtotal: sub,
-            tax: taxVal,
-            total: totalVal
-          })
+          body: JSON.stringify({ items }),
         });
-        if (!res.ok) throw new Error('Failed to update active order.');
-        const updated = await res.json();
         setOrders(prev => prev.map(o => o.id === existingActiveOrder.id ? updated : o));
       } else {
-        // Create new order on server
-        const orderId = `ord-${Date.now()}`;
-        const timestamp = Date.now();
-        const res = await fetch(`${API_URL}/api/orders`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            id: orderId,
-            tableId,
-            tableNumber: table.number,
-            items,
-            status: 'pending',
-            timestamp,
-            subtotal: sub,
-            tax: taxVal,
-            total: totalVal
-          })
-        });
-        if (!res.ok) throw new Error('Failed to create order on server.');
-
-        // Refresh database state
-        const [tRes, oRes] = await Promise.all([
-          fetch(`${API_URL}/api/tables`, { headers }),
-          fetch(`${API_URL}/api/orders`, { headers })
-        ]);
-        setTables(await tRes.json());
-        setOrders(await oRes.json());
+        await api<Order>('/api/orders', { method: 'POST', body: JSON.stringify({ tableId, items }) });
+        await reloadTablesAndOrders();
       }
     } catch (err) {
       console.error('Error creating/updating order:', err);
     }
-  }, [tables, orders, menu, settings.taxRate, clearTable]);
+  }, [tables, orders, clearTable, reloadTablesAndOrders]);
 
   const updateOrderStatus = useCallback(async (orderId: string, status: Order['status']) => {
     try {
-      const headers = await getAuthHeaders();
-      const order = orders.find(o => o.id === orderId);
-      if (!order) return;
-
-      const res = await fetch(`${API_URL}/api/orders/${orderId}`, {
-        method: 'PUT',
-        headers,
-        body: JSON.stringify({
-          ...order,
-          status
-        })
-      });
-      if (!res.ok) throw new Error('Failed to update order status.');
-
-      // Reload tables and orders since state transitions (like 'paid') clear tables automatically in the DB.
-      const [tRes, oRes] = await Promise.all([
-        fetch(`${API_URL}/api/tables`, { headers }),
-        fetch(`${API_URL}/api/orders`, { headers })
-      ]);
-      setTables(await tRes.json());
-      setOrders(await oRes.json());
+      await api(`/api/orders/${orderId}`, { method: 'PUT', body: JSON.stringify({ status }) });
+      // 'paid' frees tables on the server, so refresh both lists.
+      await reloadTablesAndOrders();
     } catch (err) {
       console.error('Error updating order status:', err);
     }
-  }, [orders]);
+  }, [reloadTablesAndOrders]);
 
   const updateMenuItem = useCallback(async (updatedItem: MenuItem) => {
     try {
-      const headers = await getAuthHeaders();
-      const res = await fetch(`${API_URL}/api/menu/${updatedItem.id}`, {
+      const updated = await api<MenuItem>(`/api/menu/${updatedItem.id}`, {
         method: 'PUT',
-        headers,
-        body: JSON.stringify(updatedItem)
+        body: JSON.stringify(updatedItem),
       });
-      if (!res.ok) throw new Error('Failed to update menu item.');
-      const updated = await res.json();
       setMenu(prev => prev.map(m => m.id === updatedItem.id ? updated : m));
     } catch (err) {
       console.error('Error updating menu item:', err);
@@ -317,103 +191,53 @@ export const CafeProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const addMenuItem = useCallback(async (item: Omit<MenuItem, 'id'>) => {
     try {
-      const headers = await getAuthHeaders();
-      const res = await fetch(`${API_URL}/api/menu`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(item)
-      });
-      if (!res.ok) throw new Error('Failed to create menu item.');
-      const created = await res.json();
+      const created = await api<MenuItem>('/api/menu', { method: 'POST', body: JSON.stringify(item) });
       setMenu(prev => [...prev, created]);
     } catch (err) {
       console.error('Error adding menu item:', err);
     }
   }, []);
 
-  const updateSettings = useCallback(async (newSettings: Settings) => {
-    try {
-      const headers = await getAuthHeaders();
-      const res = await fetch(`${API_URL}/api/settings`, {
-        method: 'PUT',
-        headers,
-        body: JSON.stringify(newSettings)
-      });
-      if (!res.ok) throw new Error('Failed to save store settings.');
-      const updated = await res.json();
-      setSettings(updated);
-    } catch (err) {
-      console.error('Error updating settings:', err);
-    }
+  /** Updates the UI immediately and saves to the server after typing pauses. */
+  const updateSettings = useCallback((newSettings: Settings) => {
+    setSettings(newSettings);
+    if (settingsTimer.current) clearTimeout(settingsTimer.current);
+    settingsTimer.current = setTimeout(async () => {
+      try {
+        await api<Settings>('/api/settings', { method: 'PUT', body: JSON.stringify(newSettings) });
+      } catch (err) {
+        console.error('Error saving store settings:', err);
+      }
+    }, SETTINGS_SAVE_DELAY_MS);
   }, []);
 
   const addTable = useCallback(async (tableData: Omit<Table, 'id' | 'status' | 'currentOrderId' | 'timerStart'>) => {
-    const headers = await getAuthHeaders();
-
-    const exists = tables.some(t => t.number.toLowerCase() === tableData.number.toLowerCase());
-    if (exists) {
+    if (tables.some(t => t.number.toLowerCase() === tableData.number.toLowerCase())) {
       throw new Error(`Table number ${tableData.number} already exists.`);
     }
-
-    const res = await fetch(`${API_URL}/api/tables`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(tableData)
-    });
-
-    if (!res.ok) {
-      const errBody = await res.json();
-      throw new Error(errBody.error || 'Failed to add table.');
-    }
-
-    const created = await res.json();
+    const created = await api<Table>('/api/tables', { method: 'POST', body: JSON.stringify(tableData) });
     setTables(prev => [...prev, created].sort((a, b) => a.number.localeCompare(b.number)));
   }, [tables]);
 
   const removeTable = useCallback(async (tableId: string) => {
-    const headers = await getAuthHeaders();
-
     const table = tables.find(t => t.id === tableId);
     if (!table) return;
     if (table.status === 'occupied') {
       throw new Error(`Cannot remove table ${table.number} because it is occupied.`);
     }
-
-    const res = await fetch(`${API_URL}/api/tables/${tableId}`, {
-      method: 'DELETE',
-      headers
-    });
-
-    if (!res.ok) {
-      const errBody = await res.json();
-      throw new Error(errBody.error || 'Failed to remove table.');
-    }
-
+    await api(`/api/tables/${tableId}`, { method: 'DELETE' });
     setTables(prev => prev.filter(t => t.id !== tableId));
   }, [tables]);
 
   const seatGroup = useCallback(async (tableIds: string[]) => {
     if (tableIds.length === 0) return;
     try {
-      const headers = await getAuthHeaders();
-      const res = await fetch(`${API_URL}/api/tables/seat-group`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ tableIds })
-      });
-      if (!res.ok) throw new Error('Failed to seat group.');
-
-      // Refresh seating states
-      const [tRes, oRes] = await Promise.all([
-        fetch(`${API_URL}/api/tables`, { headers }),
-        fetch(`${API_URL}/api/orders`, { headers })
-      ]);
-      setTables(await tRes.json());
-      setOrders(await oRes.json());
+      await api('/api/tables/seat-group', { method: 'POST', body: JSON.stringify({ tableIds }) });
+      await reloadTablesAndOrders();
     } catch (err) {
       console.error('Error seating group:', err);
     }
-  }, []);
+  }, [reloadTablesAndOrders]);
 
   return (
     <CafeContext.Provider value={{

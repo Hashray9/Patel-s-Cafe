@@ -31,3 +31,6 @@ dist-ssr
 # Specific paths just to be safe
 server/.env
 .env
+# Cloudflare Worker local secrets & build output
+.dev.vars
+.wrangler

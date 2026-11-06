@@ -1,111 +1,38 @@
 -- ==============================================================================
--- ☕ PATEL'S CAFE: FULL DATABASE POPULATION SCRIPT
--- Paste and Run this in your Supabase Dashboard -> SQL Editor
+-- ☕ PATEL'S CAFE: SEED SCRIPT FOR THE 'patel-cafe-main' CAFE
+-- Paste and run in Supabase Dashboard -> SQL Editor, AFTER schema.sql (fresh DB)
+-- or migrations/004_multi_tenant.sql (existing DB). Safe to re-run.
+--
+-- New cafes do NOT need this: owners create their cafe from the app's
+-- "Register your cafe" screen and add tables / menu items themselves.
 -- ==============================================================================
 
--- 1. Create Core Tables & Columns
-CREATE TABLE IF NOT EXISTS cafes (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS user_roles (
-    id SERIAL PRIMARY KEY,
-    user_id UUID NOT NULL UNIQUE,
-    role TEXT NOT NULL CHECK (role IN ('counter', 'cook')),
-    cafe_id TEXT REFERENCES cafes(id),
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS settings (
-    id SERIAL PRIMARY KEY,
-    store_name TEXT NOT NULL,
-    tax_rate NUMERIC NOT NULL,
-    currency TEXT NOT NULL,
-    cafe_id TEXT REFERENCES cafes(id)
-);
-
-CREATE TABLE IF NOT EXISTS tables (
-    id TEXT PRIMARY KEY,
-    number TEXT NOT NULL,
-    capacity INTEGER NOT NULL DEFAULT 4,
-    status TEXT NOT NULL DEFAULT 'available',
-    current_order_id TEXT,
-    timer_start BIGINT,
-    is_outdoor BOOLEAN NOT NULL DEFAULT FALSE,
-    group_id TEXT,
-    cafe_id TEXT REFERENCES cafes(id)
-);
-
-CREATE TABLE IF NOT EXISTS menu_items (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    price NUMERIC NOT NULL,
-    category TEXT NOT NULL,
-    is_available BOOLEAN NOT NULL DEFAULT TRUE,
-    dietary TEXT[] NOT NULL DEFAULT '{}',
-    image TEXT,
-    cafe_id TEXT REFERENCES cafes(id)
-);
-
-CREATE TABLE IF NOT EXISTS orders (
-    id TEXT PRIMARY KEY,
-    table_id TEXT NOT NULL,
-    table_number TEXT NOT NULL,
-    items JSONB NOT NULL DEFAULT '[]',
-    status TEXT NOT NULL DEFAULT 'pending',
-    timestamp BIGINT NOT NULL,
-    subtotal NUMERIC NOT NULL DEFAULT 0.00,
-    tax NUMERIC NOT NULL DEFAULT 0.00,
-    total NUMERIC NOT NULL DEFAULT 0.00,
-    cafe_id TEXT REFERENCES cafes(id)
-);
-
--- Ensure cafe_id column exists on older tables
-ALTER TABLE tables ADD COLUMN IF NOT EXISTS cafe_id TEXT REFERENCES cafes(id);
-ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS cafe_id TEXT REFERENCES cafes(id);
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS cafe_id TEXT REFERENCES cafes(id);
-ALTER TABLE settings ADD COLUMN IF NOT EXISTS cafe_id TEXT REFERENCES cafes(id);
-ALTER TABLE user_roles ADD COLUMN IF NOT EXISTS cafe_id TEXT REFERENCES cafes(id);
-
--- 2. Create / Register the Cafe Workspace
--- Change 'patel-cafe-main' or 'Patel''s Cafe' below if you want a custom Cafe ID/Name
+-- 1. Create / Register the Cafe Workspace
 INSERT INTO cafes (id, name)
 VALUES ('patel-cafe-main', 'Patel''s Cafe')
 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;
 
--- 3. Link Your User Account to this Cafe Workspace
--- Change 'hashraykumbhani@gmail.com' to any email you want to assign to this cafe
-INSERT INTO user_roles (user_id, role, cafe_id)
-SELECT id, 'counter', 'patel-cafe-main'
+-- 2. Make these accounts OWNERS of this cafe (they must already exist in Auth)
+INSERT INTO user_roles (user_id, role, cafe_id, email)
+SELECT id, 'owner', 'patel-cafe-main', email
 FROM auth.users
-WHERE email = 'hashraykumbhani@gmail.com'
-ON CONFLICT (user_id) DO UPDATE 
+WHERE email IN ('hashraykumbhani@gmail.com', 'hashraykumbhanivip@gmail.com')
+ON CONFLICT (user_id) DO UPDATE
 SET role = EXCLUDED.role,
-    cafe_id = EXCLUDED.cafe_id;
+    cafe_id = EXCLUDED.cafe_id,
+    email = EXCLUDED.email;
 
--- If you also want hashraykumbhanivip@gmail.com linked to this cafe:
-INSERT INTO user_roles (user_id, role, cafe_id)
-SELECT id, 'counter', 'patel-cafe-main'
-FROM auth.users
-WHERE email = 'hashraykumbhanivip@gmail.com'
-ON CONFLICT (user_id) DO UPDATE 
-SET role = EXCLUDED.role,
-    cafe_id = EXCLUDED.cafe_id;
-
--- 4. Seed Default Store Settings
-INSERT INTO settings (id, store_name, tax_rate, currency, cafe_id)
-VALUES (1, 'Patel Sandwichwala', 0.05, '₹', 'patel-cafe-main')
-ON CONFLICT (id) DO UPDATE 
+-- 3. Store Settings (one row per cafe)
+INSERT INTO settings (cafe_id, store_name, tax_rate, currency)
+VALUES ('patel-cafe-main', 'Patel Sandwichwala', 0.05, '₹')
+ON CONFLICT (cafe_id) DO UPDATE
 SET store_name = EXCLUDED.store_name,
     tax_rate = EXCLUDED.tax_rate,
-    currency = EXCLUDED.currency,
-    cafe_id = EXCLUDED.cafe_id;
+    currency = EXCLUDED.currency;
 
--- 5. Seed Floor Plan Tables
+-- 4. Floor Plan Tables
 INSERT INTO tables (id, number, capacity, status, timer_start, is_outdoor, cafe_id)
-VALUES 
+VALUES
   ('t-1', 'T-1', 4, 'available', NULL, FALSE, 'patel-cafe-main'),
   ('t-2', 'T-2', 2, 'available', NULL, FALSE, 'patel-cafe-main'),
   ('t-3', 'T-3', 6, 'available', NULL, FALSE, 'patel-cafe-main'),
@@ -118,7 +45,7 @@ SET number = EXCLUDED.number,
     is_outdoor = EXCLUDED.is_outdoor,
     cafe_id = EXCLUDED.cafe_id;
 
--- 6. Seed All 101 Cafe Menu Items
+-- 5. All 101 Menu Items
 INSERT INTO menu_items (id, name, price, category, is_available, dietary, image, cafe_id)
 VALUES
   ('m-1', 'Bread Butter (Normal)', 50.00, 'sandwich', TRUE, '{}', '/images/normal_sandwich.webp', 'patel-cafe-main'),
@@ -230,8 +157,3 @@ SET name = EXCLUDED.name,
     dietary = EXCLUDED.dietary,
     image = EXCLUDED.image,
     cafe_id = EXCLUDED.cafe_id;
-
--- 7. Enable Realtime Publications
-ALTER PUBLICATION supabase_realtime ADD TABLE orders;
-ALTER PUBLICATION supabase_realtime ADD TABLE tables;
-

@@ -5,18 +5,14 @@ import { supabase } from '../supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import type { Order, MenuItem, Settings } from '../types';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import { api } from '../api';
 
-const getAuthHeaders = async () => {
-  const { data: { session } } = await supabase.auth.getSession();
-  return {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${session?.access_token || ''}`
-  };
-};
+/** Orders the kitchen has to work on: open and with at least one item. */
+const isKitchenActive = (o: Order) => (o.status === 'pending' || o.status === 'preparing') && o.items.length > 0;
+const itemsSignature = (o: Order) => JSON.stringify(o.items);
 
 export const CookDashboard: React.FC = () => {
-  const { userEmail, cafeId, signOut } = useAuth();
+  const { userEmail, cafeId, cafeName, signOut } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [settings, setSettings] = useState<Settings>({ storeName: "Patel's Cafe", taxRate: 0.05, currency: '₹' });
@@ -75,11 +71,11 @@ export const CookDashboard: React.FC = () => {
 
   // Screen Wake Lock API to prevent mobile phone display from sleeping while Cook Kitchen is active
   useEffect(() => {
-    let wakeLock: any = null;
+    let wakeLock: WakeLockSentinel | null = null;
     const requestWakeLock = async () => {
-      if (typeof navigator !== 'undefined' && 'wakeLock' in navigator && (navigator as any).wakeLock?.request) {
+      if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
         try {
-          wakeLock = await (navigator as any).wakeLock.request('screen');
+          wakeLock = await navigator.wakeLock.request('screen');
         } catch {
           // Ignore wake lock failure (e.g. low battery mode)
         }
@@ -172,18 +168,36 @@ export const CookDashboard: React.FC = () => {
     playOrderChimeRef.current = playOrderChime;
   }, [playOrderChime]);
 
+  // Clock for the "x min ago" labels; ticks so ticket ages stay current.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Snapshot of active orders (id -> items) from the previous load; null until first load.
+  const lastActiveRef = useRef<Map<string, string> | null>(null);
+
   const loadData = useCallback(async () => {
     try {
-      const headers = await getAuthHeaders();
-      const [menuRes, ordersRes, settingsRes] = await Promise.all([
-        fetch(`${API_URL}/api/menu`, { headers }),
-        fetch(`${API_URL}/api/orders`, { headers }),
-        fetch(`${API_URL}/api/settings`, { headers }),
+      const [menuData, ordersData, settingsData] = await Promise.all([
+        api<MenuItem[]>('/api/menu'),
+        api<Order[]>('/api/orders'),
+        api<Settings>('/api/settings'),
       ]);
 
-      if (menuRes.ok) setMenu(await menuRes.json());
-      if (ordersRes.ok) setOrders(await ordersRes.json());
-      if (settingsRes.ok) setSettings(await settingsRes.json());
+      // Chime when a new ticket appears or an open ticket's items change.
+      const active = new Map(ordersData.filter(isKitchenActive).map(o => [o.id, itemsSignature(o)]));
+      const previous = lastActiveRef.current;
+      if (previous) {
+        const hasNewWork = [...active].some(([id, sig]) => previous.get(id) !== sig);
+        if (hasNewWork) playOrderChimeRef.current();
+      }
+      lastActiveRef.current = active;
+
+      setMenu(menuData);
+      setOrders(ordersData);
+      setSettings(settingsData);
     } catch (err) {
       console.error('Error loading cook data:', err);
     } finally {
@@ -191,38 +205,19 @@ export const CookDashboard: React.FC = () => {
     }
   }, []);
 
+  // Initial load + live updates for THIS cafe's orders only (RLS also enforces it).
   useEffect(() => {
+    if (!cafeId) return;
+    // Data fetch on mount; state is only set after the request resolves.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData();
-  }, [loadData]);
 
-  // Real-time subscription: listen for order changes & trigger chime on incoming order
-  useEffect(() => {
     const channel = supabase
-      .channel('cook-orders-realtime')
+      .channel(`kitchen-orders-${cafeId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'orders' },
-        (payload: any) => {
-          // If a new order is punched (INSERT)
-          if (payload.eventType === 'INSERT') {
-            const newRecord = payload.new;
-            if (!cafeId || !newRecord?.cafe_id || newRecord.cafe_id === cafeId) {
-              playOrderChimeRef.current();
-            }
-          } else if (payload.eventType === 'UPDATE') {
-            const newRecord = payload.new;
-            const oldRecord = payload.old;
-            const isCafeMatch = !cafeId || !newRecord?.cafe_id || newRecord.cafe_id === cafeId;
-            const becameActive = (newRecord?.status === 'pending' || newRecord?.status === 'preparing') &&
-                                 (oldRecord?.status !== 'pending' && oldRecord?.status !== 'preparing');
-            const itemsChanged = JSON.stringify(newRecord?.items) !== JSON.stringify(oldRecord?.items);
-            if (isCafeMatch && (becameActive || (newRecord?.status !== 'ready' && newRecord?.status !== 'paid' && itemsChanged))) {
-              playOrderChimeRef.current();
-            }
-          }
-          // Reload orders to keep kitchen board live
-          loadData();
-        }
+        { event: '*', schema: 'public', table: 'orders', filter: `cafe_id=eq.${cafeId}` },
+        () => { loadData(); }
       )
       .subscribe();
 
@@ -234,30 +229,19 @@ export const CookDashboard: React.FC = () => {
   const handleMarkReady = async (orderId: string) => {
     setUpdatingOrderId(orderId);
     try {
-      const headers = await getAuthHeaders();
-      const order = orders.find(o => o.id === orderId);
-      if (!order) return;
-
-      await fetch(`${API_URL}/api/orders/${orderId}`, {
-        method: 'PUT',
-        headers,
-        body: JSON.stringify({
-          ...order,
-          status: 'ready'
-        })
-      });
-
-      // Optimistically update, real-time will confirm
+      await api(`/api/orders/${orderId}`, { method: 'PUT', body: JSON.stringify({ status: 'ready' }) });
+      // Optimistic update; the realtime event will confirm.
       setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'ready' } : o));
     } catch (err) {
       console.error('Error marking order ready:', err);
+      alert(err instanceof Error ? err.message : 'Could not mark the order ready.');
     } finally {
       setUpdatingOrderId(null);
     }
   };
 
   // Show only active orders (pending or preparing) — not paid, not ready
-  const activeOrders = orders.filter(o => o.status === 'pending' || o.status === 'preparing');
+  const activeOrders = orders.filter(isKitchenActive);
   // Show recently readied orders (so cook can see what was just completed)
   const readyOrders = orders.filter(o => o.status === 'ready');
 
@@ -266,7 +250,7 @@ export const CookDashboard: React.FC = () => {
   };
 
   const timeSince = (timestamp: number): string => {
-    const diff = Math.floor((Date.now() - timestamp) / 1000);
+    const diff = Math.max(0, Math.floor((now - timestamp) / 1000));
     if (diff < 60) return `${diff}s ago`;
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     return `${Math.floor(diff / 3600)}h ago`;
@@ -293,16 +277,11 @@ export const CookDashboard: React.FC = () => {
           </div>
           <div>
             <span className="font-headline-md text-[18px] md:text-[20px] font-bold tracking-tight select-none">
-              {settings.storeName}
+              {settings.storeName || cafeName}
             </span>
             <span className="hidden sm:inline-block text-[11px] font-bold bg-[#ffd982] text-black px-2 py-0.5 rounded border border-black ml-2 uppercase tracking-wider">
               Kitchen
             </span>
-            {cafeId && (
-              <span className="hidden md:inline-block text-[10px] font-bold bg-white/10 text-white/80 px-2 py-0.5 rounded border border-white/20 ml-2 font-mono">
-                {cafeId}
-              </span>
-            )}
           </div>
         </div>
 

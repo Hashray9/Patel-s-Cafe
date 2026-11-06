@@ -3,5 +3,15 @@ main = "worker.js"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
-[vars]
-# Public vars go here (none needed — secrets are set via `wrangler secret put`)
+# Local `npm run dev` listens on the same port the frontend falls back to.
+[dev]
+port = 5000
+
+# Secrets (never commit): set with `npx wrangler secret put <NAME>`
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+# For local dev put them in server/.dev.vars (git-ignored).
+#
+# Optional plain vars:
+# [vars]
+# APP_URL = "https://your-frontend.example.com"          # link target in invite e-mails
+# ALLOWED_ORIGINS = "https://your-frontend.example.com"  # CORS allow-list (default: any)

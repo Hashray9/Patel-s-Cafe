@@ -42,3 +42,13 @@ export interface Settings {
   taxRate: number; // e.g., 0.08 for 8%
   currency: string; // e.g., '$'
 }
+
+export type UserRole = 'owner' | 'counter' | 'cook';
+
+export interface StaffMember {
+  userId: string;
+  email: string;
+  role: UserRole;
+  createdAt: string;
+  isYou: boolean;
+}

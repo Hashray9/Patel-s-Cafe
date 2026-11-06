@@ -39,7 +39,7 @@ export const MenuModal: React.FC<MenuModalProps> = ({ item, onClose }) => {
       category,
       isAvailable,
       dietary,
-      image: image.trim() || undefined
+      image: image.trim() // '' clears the image on the server
     };
 
     if (item) {
